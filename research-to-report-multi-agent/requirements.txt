@@ -1,0 +1,14 @@
+# Core LangGraph and LangChain
+langgraph>=0.2.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+
+# Data validation and settings
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+
+# Environment configuration
+python-dotenv>=1.0.1
+
+# Logging
+structlog>=24.4.0
