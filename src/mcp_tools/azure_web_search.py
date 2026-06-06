@@ -1,66 +1,130 @@
-# pip install azure-identity httpx langchain-azure-ai==1.2.3 langchain-mcp-adapters==0.2.2 langchain-openai==1.1.13 langgraph==1.1.6
+"""
+Azure AI Foundry — MCP Toolbox Web-Search Agent
+================================================
+Wires a LangGraph ReAct agent to the Bing web-search toolbox deployed in
+your Azure AI Foundry project.  Uses API-key auth instead of DefaultAzureCredential
+so no 'az login' is needed.
+
+Run standalone:
+    python -m src.mcp_tools.azure_web_search
+
+Or import create_agent_with_toolbox / call_agent_with_toolbox from elsewhere.
+"""
 import asyncio
+import os
+from pathlib import Path
 
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from langchain_openai import AzureChatOpenAI
-from langchain_azure_ai.tools import AzureAIProjectToolbox
-from langgraph.prebuilt import create_react_agent
+from dotenv import load_dotenv
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# Load .env from project root (two levels up from this file)
+_project_root = Path(__file__).resolve().parents[2]
+load_dotenv(_project_root / ".env")
 
-endpoint = "https://reasoning-agent-hack2-resource.services.ai.azure.com/api/projects/reasoning-agent-hack2"
-toolbox_name = "reasoning-agent-web-search"
-toolbox_version = "1"
-model_deployment = "<your-model-deployment-name>"
+# ── Configuration — all read from .env ──────────────────────────────────────
+ENDPOINT         = os.environ["AZURE_PROJECT_ENDPOINT"]        # .../projects/<name>
+TOOLBOX_NAME     = os.environ.get("AZURE_TOOLBOX_NAME", "reasoning-agent-web-search")
+TOOLBOX_VERSION  = os.environ.get("AZURE_TOOLBOX_VERSION", "1")
+MODEL_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "phi-4-mini-reasoning")
+API_KEY          = os.environ["AZURE_OPENAI_API_KEY"]
 
-from urllib.parse import urlparse
-_parsed = urlparse(endpoint)
-azure_openai_endpoint = f"{_parsed.scheme}://{_parsed.netloc}"
+# Derive the OpenAI-compatible endpoint from the project endpoint
+# e.g. https://<resource>.services.ai.azure.com/api/projects/<name>
+#   -> https://<resource>.services.ai.azure.com/openai/v1
+from urllib.parse import urlparse as _up
+_p = _up(ENDPOINT)
+AZURE_OPENAI_ENDPOINT = os.environ.get(
+    "AZURE_OPENAI_ENDPOINT",
+    f"{_p.scheme}://{_p.netloc}/openai/v1",
+)
+if AZURE_OPENAI_ENDPOINT.endswith("/chat/completions"):
+    AZURE_OPENAI_ENDPOINT = AZURE_OPENAI_ENDPOINT[:-len("/chat/completions")]
 
-# ── Reusable functions (can be pulled into a hosted agent main.py) ────────────
-
-# [START langgraph_toolbox]
+# ── Agent singleton ──────────────────────────────────────────────────────────
 _agent = None
 
+
 async def create_agent_with_toolbox():
-    """Create a LangGraph ReAct agent wired to a Foundry toolbox."""
+    """Create a LangGraph ReAct agent wired to the Foundry Bing toolbox."""
     global _agent
 
-    token_provider = get_bearer_token_provider(
-        DefaultAzureCredential(), "https://ai.azure.com/.default"
-    )
+    from langchain_openai import ChatOpenAI
+    from langchain_azure_ai.tools import AzureAIProjectToolbox
+    from langgraph.prebuilt import create_react_agent
 
-    llm = AzureChatOpenAI(
-        azure_endpoint=azure_openai_endpoint,
-        azure_deployment=model_deployment,
-        azure_ad_token_provider=token_provider,
-        api_version="2025-03-01-preview",
+    print(f"[toolbox] Connecting to project  : {ENDPOINT}")
+    print(f"[toolbox] Toolbox                : {TOOLBOX_NAME} v{TOOLBOX_VERSION}")
+    print(f"[toolbox] Model deployment       : {MODEL_DEPLOYMENT}")
+
+    llm = ChatOpenAI(
+        base_url=AZURE_OPENAI_ENDPOINT,
+        api_key=API_KEY,
+        model=MODEL_DEPLOYMENT,
+        temperature=0.3,
+        timeout=120.0,
     )
 
     toolbox = AzureAIProjectToolbox(
-        project_endpoint=endpoint,
-        toolbox_name=toolbox_name,
-        toolbox_version=toolbox_version,
-        credential=DefaultAzureCredential(),
+        project_endpoint=ENDPOINT,
+        toolbox_name=TOOLBOX_NAME,
+        toolbox_version=TOOLBOX_VERSION,
+        credential=API_KEY,   # string key accepted by the SDK
     )
     tools = await toolbox.get_tools()
+    print(f"[toolbox] Tools loaded           : {[t.name for t in tools]}")
 
     for t in tools:
         t.handle_tool_error = True
 
     _agent = create_react_agent(llm, tools)
+    return _agent
 
 
-async def call_agent_with_toolbox(input_messages):
-    """Send a message to the toolbox agent and print the response."""
-    result = await _agent.ainvoke(input_messages)
-    print(result["messages"][-1].content)
-# [END langgraph_toolbox]
+async def call_agent_with_toolbox(query: str) -> str:
+    """
+    Send *query* to the toolbox agent and return the final response string.
+    Prints each step to the terminal so you can watch the reasoning.
+    """
+    if _agent is None:
+        raise RuntimeError("call create_agent_with_toolbox() first")
+
+    print(f"\n[agent] Query: {query}")
+    print("[agent] Thinking (may take 10-30 s for phi-4-reasoning)...")
+
+    result = await _agent.ainvoke({"messages": [("user", query)]})
+
+    # Print intermediate tool calls
+    for msg in result["messages"][:-1]:
+        role = getattr(msg, "type", type(msg).__name__)
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                print(f"  [tool_call] {tc['name']}({tc.get('args', {})})")
+        elif role == "tool":
+            content_preview = str(msg.content)[:200]
+            print(f"  [tool_result] {content_preview}...")
+
+    final = result["messages"][-1].content
+    return final
 
 
-# ── Script entry point ────────────────────────────────────────────────────
+# ── Standalone demo ──────────────────────────────────────────────────────────
 async def main():
-    await create_agent_with_toolbox()
-    await call_agent_with_toolbox({"messages": [("user", "What tools are available?")]})
+    print("=" * 64)
+    print("Azure AI Foundry — MCP Toolbox Web-Search Demo")
+    print("=" * 64)
 
-asyncio.run(main())
+    await create_agent_with_toolbox()
+
+    questions = [
+        "What tools are available in this toolbox?",
+        "Search the web: What are the latest EV policy updates in India 2024?",
+    ]
+
+    for q in questions:
+        answer = await call_agent_with_toolbox(q)
+        print("\n[agent] Answer:")
+        print(answer)
+        print("-" * 64)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

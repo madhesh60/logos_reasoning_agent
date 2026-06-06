@@ -1,23 +1,74 @@
+"""
+Azure AI Foundry — Quick Model Connection Test
+=============================================
+Tests both phi-4-mini-reasoning and phi-4-reasoning deployments
+using the API key from .env (no Azure CLI login required).
+
+Run from project root:
+    python -m src.utils.run_model
+"""
+import os
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path when run directly
+project_root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(project_root))
+
+from dotenv import load_dotenv
+load_dotenv(project_root / ".env")
+
 from openai import OpenAI
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-endpoint = "https://reasoning-agent-hack2-resource.services.ai.azure.com/openai/v1"
-deployment_name = "Phi-4-mini-reasoning"
-token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://ai.azure.com/.default")
+# ── Connection details pulled from .env ─────────────────────────────────────
+ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"]          # e.g. https://<res>.services.ai.azure.com/openai/v1
+API_KEY  = os.environ["AZURE_OPENAI_API_KEY"]
+DEPLOY   = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "phi-4-mini-reasoning")
 
-client = OpenAI(
-    base_url=endpoint,
-    api_key=token_provider
-)
+# Normalise: strip /chat/completions if accidentally left in
+if ENDPOINT.endswith("/chat/completions"):
+    ENDPOINT = ENDPOINT[: -len("/chat/completions")]
+
+print("=" * 64)
+print("Azure AI Foundry — Model Connection Test")
+print("=" * 64)
+print(f"  Endpoint   : {ENDPOINT}")
+print(f"  Deployment : {DEPLOY}")
+print()
+
+client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
+
+TEST_MESSAGES = [
+    {
+        "role": "system",
+        "content": (
+            "You are a concise reasoning assistant. "
+            "Show your reasoning steps before answering."
+        ),
+    },
+    {
+        "role": "user",
+        "content": "What are 3 main investment risks in the Indian EV market? "
+                   "Reason step-by-step then give a short final answer.",
+    },
+]
+
+print("Sending test prompt...")
+print("-" * 64)
 
 completion = client.chat.completions.create(
-    model=deployment_name,
-    messages=[
-        {
-            "role": "user",
-            "content": "What is the capital of France?",
-        }
-    ],
+    model=DEPLOY,
+    messages=TEST_MESSAGES,
+    max_tokens=800,
 )
 
-print(completion.choices[0].message)
+msg = completion.choices[0].message
+print(f"Role    : {msg.role}")
+print()
+print("Response:")
+print(msg.content)
+print()
+print("=" * 64)
+print(f"Finish reason : {completion.choices[0].finish_reason}")
+print(f"Total tokens  : {completion.usage.total_tokens if completion.usage else 'N/A'}")
+print("=" * 64)

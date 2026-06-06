@@ -110,12 +110,19 @@ Output format should always include source URLs for verification.
         self._setup_llm()
 
         # Initialize MCP Web Search Tool
+        # Pass AZURE_PROJECT_ENDPOINT so MCPWebSearchTool routes through
+        # _execute_azure_search() using the real Foundry toolbox.
+        import os
         from ..mcp_tools.web_search import MCPWebSearchTool
         from ..utils.config import get_mcp_config
         mcp_config = get_mcp_config()
         self.mcp_tool = MCPWebSearchTool(
             mcp_server_url=mcp_config["server_url"],
-            api_key=mcp_config["auth_token"]
+            api_key=mcp_config["auth_token"],
+            azure_project_endpoint=os.getenv("AZURE_PROJECT_ENDPOINT"),
+            azure_toolbox_name=os.getenv("AZURE_TOOLBOX_NAME", "reasoning-agent-web-search"),
+            azure_toolbox_version=os.getenv("AZURE_TOOLBOX_VERSION", "1"),
+            azure_openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
         )
 
     def _setup_llm(self):
