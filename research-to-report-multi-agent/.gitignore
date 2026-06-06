@@ -13,3 +13,10 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local Scratch and tasks
+scratch/
+.system_generated/
+tasks/
+walkthrough/
+*.log
