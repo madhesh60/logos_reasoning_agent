@@ -100,8 +100,117 @@ async def create_agent_with_toolbox():
     tools = [web_search_tool]
     print(f"[toolbox] Tools loaded           : {[t.name for t in tools]}")
 
-    from langgraph.prebuilt import create_react_agent
-    _agent = create_react_agent(llm, tools)
+    class CustomReActAgent:
+        def __init__(self, llm, tools):
+            self.llm = llm
+            self.tools = {t.name: t for t in tools}
+
+        async def ainvoke(self, input_dict: dict, config: dict | None = None) -> dict:
+            from langchain_core.messages import AIMessage, ToolMessage, SystemMessage, HumanMessage
+            from src.utils.config import clean_and_parse_json
+            import uuid
+
+            raw_messages = input_dict.get("messages", [])
+            messages = []
+            for msg in raw_messages:
+                if isinstance(msg, tuple):
+                    role, content = msg
+                    if role == "user":
+                        messages.append(HumanMessage(content=content))
+                    elif role == "system":
+                        messages.append(SystemMessage(content=content))
+                    elif role == "assistant":
+                        messages.append(AIMessage(content=content))
+                else:
+                    messages.append(msg)
+
+            system_prompt = (
+                "You are a helpful assistant with access to the following tools:\n"
+                + "\n".join([f"- {t.name}: {t.description}" for t in self.tools.values()])
+                + "\n\n"
+                "If the user asks you to search the web, gather information, or asks about recent events (like 2024/2025/2026), "
+                "you MUST call the 'bing_web_search' tool first to retrieve the facts. Do not answer from your pre-trained knowledge directly without searching.\n\n"
+                "To use a tool, you MUST respond in this format (wrapped in a ```json code block):\n"
+                "```json\n"
+                "{\n"
+                '  "action": "<tool_name>",\n'
+                '  "action_input": "<your tool input here>"\n'
+                "}\n"
+                "```\n\n"
+                "When you have the final answer to the user's question (after calling tools if needed), you MUST respond in this format (wrapped in a ```json code block):\n"
+                "```json\n"
+                "{\n"
+                '  "action": "final_answer",\n'
+                '  "action_input": "<your final answer here>"\n'
+                "}\n"
+                "```\n\n"
+                "Always respond with one of these two JSON formats. Do not output anything else outside the json block except your <think> reasoning."
+            )
+
+            run_messages = [SystemMessage(content=system_prompt)] + messages
+
+            for iteration in range(5):
+                response = await self.llm.ainvoke(run_messages)
+                content = response.content
+
+                try:
+                    parsed = clean_and_parse_json(content)
+                except Exception:
+                    ai_msg = AIMessage(content=content)
+                    run_messages.append(ai_msg)
+                    break
+
+                if not isinstance(parsed, dict):
+                    ai_msg = AIMessage(content=str(parsed))
+                    run_messages.append(ai_msg)
+                    break
+
+                action = parsed.get("action")
+                action_input = parsed.get("action_input")
+
+                if action == "final_answer" or not action:
+                    ai_msg = AIMessage(content=str(action_input or content))
+                    run_messages.append(ai_msg)
+                    break
+
+                if action in self.tools:
+                    tool = self.tools[action]
+                    call_id = f"call_{uuid.uuid4().hex[:8]}"
+
+                    ai_msg = AIMessage(
+                        content=content,
+                        tool_calls=[{
+                            "name": action,
+                            "args": {"query": action_input} if isinstance(action_input, str) else action_input,
+                            "id": call_id
+                        }]
+                    )
+                    run_messages.append(ai_msg)
+
+                    # Execute the tool via its coroutine
+                    tool_result = await tool.coroutine(action_input)
+
+                    tool_msg = ToolMessage(
+                        content=str(tool_result),
+                        tool_call_id=call_id,
+                        name=action
+                    )
+                    run_messages.append(tool_msg)
+                else:
+                    error_msg = f"Error: Tool '{action}' is not available. Available tools: {list(self.tools.keys())}."
+                    ai_msg = AIMessage(content=content)
+                    run_messages.append(ai_msg)
+
+                    tool_msg = ToolMessage(
+                        content=error_msg,
+                        tool_call_id=f"call_{uuid.uuid4().hex[:8]}",
+                        name=action
+                    )
+                    run_messages.append(tool_msg)
+
+            return {"messages": run_messages[1:]}
+
+    _agent = CustomReActAgent(llm, tools)
     return _agent
 
 
