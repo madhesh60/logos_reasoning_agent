@@ -152,7 +152,9 @@ Output format should always include structured reasoning steps.
         """Set up the language model from configuration."""
         if self.llm is None:
             from ..utils.config import get_chat_model
-            self.llm = get_chat_model(temperature=0.3)
+            # Use max_tokens=2500: analyst prompt includes research sources,
+            # so we need room for a moderate prompt + structured JSON output
+            self.llm = get_chat_model(temperature=0.3, max_tokens=2500)
 
     async def analyze(
         self,

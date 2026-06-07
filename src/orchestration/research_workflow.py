@@ -20,6 +20,7 @@ from ..agents.planner import PlannerAgent, ResearchPlan, SubTask, TaskType
 from ..agents.researcher import ResearcherAgent, ResearchResults
 from ..agents.analyst import AnalystAgent, AnalysisResults
 from ..agents.writer import WriterAgent, GeneratedReport, ReportFormat
+from ..agents.competitive_analysis import CompetitiveLandscapeAgent, CompetitiveAnalysisResult
 from ..a2a.client import A2AClient
 from ..a2a.server import A2AServer
 
@@ -33,6 +34,7 @@ class WorkflowState(TypedDict):
     plan: ResearchPlan | None
     research_results: ResearchResults | None
     analysis_results: AnalysisResults | None
+    competitive_analysis: CompetitiveAnalysisResult | None
     report: GeneratedReport | None
 
     # Progress tracking
@@ -86,6 +88,7 @@ class ResearchWorkflow:
         self.researcher = ResearcherAgent()
         self.analyst = AnalystAgent()
         self.writer = WriterAgent()
+        self.competitive_analyst = CompetitiveLandscapeAgent()
 
         # Initialize A2A components if enabled
         if enable_a2a:
@@ -98,6 +101,7 @@ class ResearchWorkflow:
             "research_workflow_initialized",
             enable_a2a=enable_a2a,
             enable_mcp=enable_mcp,
+            enable_competitive_analysis=self.competitive_analyst.is_available,
             max_retries=max_retries
         )
 
@@ -124,6 +128,7 @@ class ResearchWorkflow:
         workflow.add_node("validate_plan", self._validate_plan_node)
         workflow.add_node("research", self._research_node)
         workflow.add_node("analyze", self._analyze_node)
+        workflow.add_node("competitive_analysis", self._competitive_analysis_node)
         workflow.add_node("write_report", self._write_report_node)
         workflow.add_node("handle_error", self._handle_error_node)
 
@@ -140,7 +145,8 @@ class ResearchWorkflow:
             }
         )
         workflow.add_edge("research", "analyze")
-        workflow.add_edge("analyze", "write_report")
+        workflow.add_edge("analyze", "competitive_analysis")
+        workflow.add_edge("competitive_analysis", "write_report")
         workflow.add_edge("write_report", END)
 
         # Error handling edge
@@ -371,6 +377,33 @@ class ResearchWorkflow:
                 "failed_tasks": state.get("failed_tasks", []) + ["analyze"]
             }
 
+    async def _competitive_analysis_node(self, state: WorkflowState) -> dict[str, Any]:
+        """Execute the competitive landscape analysis node."""
+        logger.info("workflow_competitive_analysis_start", query=state["query"][:50])
+
+        try:
+            comp_result = await self.competitive_analyst.analyze_competitive_landscape(
+                query=state["query"]
+            )
+
+            # Update confidence tracking
+            confidence_scores = state.get("confidence_scores", {})
+            confidence_scores["competitive_analysis"] = comp_result.confidence_score
+
+            return {
+                "competitive_analysis": comp_result,
+                "current_task": "competitive_analysis",
+                "completed_tasks": state.get("completed_tasks", []) + ["competitive_analysis"],
+                "confidence_scores": confidence_scores
+            }
+        except Exception as e:
+            logger.warning("competitive_analysis_failed", error=str(e))
+            # Non-fatal: continue without competitive analysis
+            return {
+                "competitive_analysis": None,
+                "completed_tasks": state.get("completed_tasks", []) + ["competitive_analysis"],
+            }
+
     async def _write_report_node(self, state: WorkflowState) -> dict[str, Any]:
         """Execute the report writing node."""
         analysis_results = state.get("analysis_results")
@@ -421,6 +454,20 @@ class ResearchWorkflow:
                     for r in (research_results.high_confidence_sources +
                               research_results.medium_confidence_sources)
                 ]
+
+            # Enrich with competitive landscape analysis if available
+            comp_analysis = state.get("competitive_analysis")
+            if comp_analysis:
+                analysis_data["competitive_landscape"] = {
+                    "market_overview": comp_analysis.market_overview,
+                    "key_competitors": [
+                        {"name": c.competitor_name, "insight": c.insight, "category": c.category}
+                        for c in comp_analysis.key_competitors
+                    ],
+                    "market_trends": comp_analysis.market_trends,
+                    "swot_analysis": comp_analysis.swot_analysis,
+                    "strategic_recommendations": comp_analysis.strategic_recommendations,
+                }
 
             report = None
             if self.enable_a2a and self.a2a_clients and "writer" in self.a2a_clients:
@@ -489,6 +536,7 @@ class ResearchWorkflow:
             "plan": None,
             "research_results": None,
             "analysis_results": None,
+            "competitive_analysis": None,
             "report": None,
             "current_task": None,
             "completed_tasks": [],
@@ -572,7 +620,7 @@ class ResearchWorkflow:
         }
 
         # Stream through nodes
-        nodes = ["plan", "validate_plan", "research", "analyze", "write_report"]
+        nodes = ["plan", "validate_plan", "research", "analyze", "competitive_analysis", "write_report"]
 
         for node in nodes:
             yield {"stage": node, "status": "in_progress"}

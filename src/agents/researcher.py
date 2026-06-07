@@ -129,7 +129,7 @@ Output format should always include source URLs for verification.
         """Set up the language model from configuration."""
         if self.llm is None:
             from ..utils.config import get_chat_model
-            self.llm = get_chat_model(temperature=0.4)
+            self.llm = get_chat_model(temperature=0.4, max_tokens=2500)
 
     async def search(
         self,

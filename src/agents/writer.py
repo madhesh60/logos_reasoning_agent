@@ -135,7 +135,9 @@ Output should be structured JSON or Markdown as appropriate.
         """Set up the language model from configuration."""
         if self.llm is None:
             from ..utils.config import get_chat_model
-            self.llm = get_chat_model(temperature=0.4)
+            # Use max_tokens=2000: writer prompt includes source data so needs
+            # room for a reasonably large prompt + enough output for the report
+            self.llm = get_chat_model(temperature=0.4, max_tokens=2000)
 
     async def generate_report(
         self,
@@ -238,50 +240,29 @@ Output should be structured JSON or Markdown as appropriate.
 
         reasoning_text = "\n".join([f"{i+1}. {r}" for i, r in enumerate(reasoning_chain[:5])]) or "No reasoning chain available."
 
-        prompt = f"""
-Generate a comprehensive research report for the following query:
+        prompt = f"""Generate a research report JSON for this query: {query[:120]}
 
-QUERY: {query}
+INSIGHTS:
+{insights_text[:400]}
 
-KEY INSIGHTS:
-{insights_text}
+RISKS:
+{risks_text[:300]}
 
-RISKS IDENTIFIED:
-{risks_text}
-
-PATTERNS DETECTED:
-{patterns_text}
-
-REASONING CHAIN:
-{reasoning_text}
-
-Create a detailed JSON report with this structure:
+Return ONLY this JSON structure:
 {{
-    "title": "<professional report title>",
-    "executive_summary": "<2-3 paragraph executive summary covering key findings and main conclusions>",
-    "sections": [
-        {{
-            "section_id": "section_1",
-            "title": "<section title>",
-            "content": "<section content as well-structured text>",
-            "data": {{}},
-            "sources": []
-        }}
-    ],
-    "conclusions": ["<conclusion 1>", "<conclusion 2>", ...],
-    "recommendations": ["<recommendation 1>", "<recommendation 2>", ...],
-    "appendices": []
+  "title": "Report title here",
+  "executive_summary": "2 paragraph summary of findings",
+  "sections": [
+    {{"section_id": "findings", "title": "Key Findings", "content": "Detailed findings here", "data": {{}}, "sources": []}},
+    {{"section_id": "analysis", "title": "Risk Analysis", "content": "Risk analysis here", "data": {{}}, "sources": []}},
+    {{"section_id": "recommendations", "title": "Recommendations", "content": "Recommendations here", "data": {{}}, "sources": []}}
+  ],
+  "conclusions": ["conclusion 1", "conclusion 2", "conclusion 3"],
+  "recommendations": ["recommendation 1", "recommendation 2"],
+  "appendices": []
 }}
 
-Ensure:
-- Executive summary is compelling and self-contained
-- Sections are logically organized (typically: Introduction, Findings, Analysis, Risks, Recommendations)
-- Conclusions are supported by evidence
-- Recommendations are specific and actionable
-- Content is professional and well-written
-
-IMPORTANT: Return ONLY the JSON object, no additional text.
-"""
+Output ONLY the JSON, starting with {{ and ending with }}"""
 
         response = await self.llm.ainvoke([
             SystemMessage(content=self.SYSTEM_PROMPT),
@@ -295,6 +276,33 @@ IMPORTANT: Return ONLY the JSON object, no additional text.
         except Exception as e:
             logger.error("writer_json_parse_error", error=str(e))
             return self._create_fallback_report(query)
+
+    @staticmethod
+    def _normalize_sources(raw_sources: list) -> list[str]:
+        """Normalize source entries to strings.
+
+        The LLM may return sources as plain strings or as dicts like
+        {"title": "...", "url": "...", "confidence": 0.8}.
+        Pydantic expects ``list[str]``, so we coerce dicts to a
+        human-readable citation string.
+        """
+        normalized: list[str] = []
+        for src in raw_sources:
+            if isinstance(src, str):
+                normalized.append(src)
+            elif isinstance(src, dict):
+                # Build a citation string from available fields
+                parts = []
+                if src.get("title"):
+                    parts.append(str(src["title"]))
+                if src.get("source_name") or src.get("source"):
+                    parts.append(str(src.get("source_name") or src.get("source")))
+                if src.get("url"):
+                    parts.append(str(src["url"]))
+                normalized.append(" — ".join(parts) if parts else str(src))
+            else:
+                normalized.append(str(src))
+        return normalized
 
     def _build_sections(self, report_data: dict, risks: list) -> list[ReportSection]:
         """Build structured sections from report data."""
@@ -317,7 +325,7 @@ IMPORTANT: Return ONLY the JSON object, no additional text.
                 content=section_data.get("content", ""),
                 subsections=[],
                 data=section_data.get("data", {}),
-                sources=section_data.get("sources", [])
+                sources=self._normalize_sources(section_data.get("sources", []))
             )
             sections.append(section)
 
@@ -360,14 +368,24 @@ IMPORTANT: Return ONLY the JSON object, no additional text.
         citations = []
 
         for i, source in enumerate(sources[:10], 1):
-            citations.append({
-                "id": f"ref_{i}",
-                "title": source.get("title", "Unknown Title"),
-                "source": source.get("source_name", source.get("source", "Unknown Source")),
-                "url": source.get("url", ""),
-                "accessed": datetime.utcnow().isoformat(),
-                "relevance": source.get("relevance_score", source.get("relevance", 0.5))
-            })
+            if isinstance(source, dict):
+                citations.append({
+                    "id": f"ref_{i}",
+                    "title": source.get("title", "Unknown Title"),
+                    "source": source.get("source_name", source.get("source", "Unknown Source")),
+                    "url": source.get("url", ""),
+                    "accessed": datetime.utcnow().isoformat(),
+                    "relevance": source.get("relevance_score", source.get("relevance", 0.5))
+                })
+            elif isinstance(source, str):
+                citations.append({
+                    "id": f"ref_{i}",
+                    "title": source[:100],
+                    "source": "Referenced Source",
+                    "url": "",
+                    "accessed": datetime.utcnow().isoformat(),
+                    "relevance": 0.5
+                })
 
         return citations
 

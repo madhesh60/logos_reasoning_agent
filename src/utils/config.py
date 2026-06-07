@@ -227,7 +227,7 @@ def validate_config(config: AppConfig) -> list[str]:
 
 
 # Centralized LLM Model Builder
-def get_chat_model(temperature: float = 0.3, max_tokens: int = 4000) -> Any:
+def get_chat_model(temperature: float = 0.3, max_tokens: int = 3000) -> Any:
     """
     Get a configured Chat Model (either ChatOpenAI or AzureChatOpenAI).
 
