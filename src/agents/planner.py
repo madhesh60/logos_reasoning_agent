@@ -18,7 +18,7 @@ Used by: Orchestrator (via A2A protocol)
 from typing import Any, Literal
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_openai import AzureChatOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 import json
 import structlog
@@ -58,6 +58,23 @@ class SubTask(BaseModel):
     output_format: str = Field(default="json", description="Expected output format")
     search_queries: list[str] = Field(default_factory=list, description="Search queries needed")
     key_aspects: list[str] = Field(default_factory=list, description="Key aspects to investigate")
+
+    @field_validator("depends_on", "search_queries", "key_aspects", mode="before")
+    @classmethod
+    def coerce_to_list(cls, v):
+        """Coerce None, empty string, or non-list values to an empty list."""
+        if v is None or v == "" or v == "none" or v == "null":
+            return []
+        if isinstance(v, str):
+            # Handle comma-separated string like "task_001, task_002"
+            stripped = v.strip()
+            if not stripped:
+                return []
+            return [x.strip() for x in stripped.split(",") if x.strip()]
+        if isinstance(v, list):
+            # Filter out empty strings from the list
+            return [str(x) for x in v if x is not None and str(x).strip()]
+        return []
 
 
 class ResearchPlan(BaseModel):
