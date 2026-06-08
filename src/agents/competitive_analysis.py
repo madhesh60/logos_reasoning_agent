@@ -73,13 +73,8 @@ class CompetitiveLandscapeAgent:
     def __init__(self):
         """Initialize from .env WEB SEARCH ANALYSIS configuration."""
         self.agent_id = os.getenv("AZURE_EXISTING_AGENT_ID", "")
-        self.project_endpoint = os.getenv(
-            "AZURE_EXISTING_AIPROJECT_ENDPOINT",
-            os.getenv("AZURE_PROJECT_ENDPOINT", "")
-        )
+        self.project_endpoint = os.getenv("AZURE_PROJECT_ENDPOINT", "")
         self.api_key = os.getenv("AZURE_OPENAI_API_KEY", "")
-        self.resource_id = os.getenv("AZURE_EXISTING_AIPROJECT_RESOURCE_ID", "")
-        self.subscription_id = os.getenv("AZURE_SUBSCRIPTION_ID", "")
 
         self._available = bool(self.agent_id and self.project_endpoint and self.api_key)
 
@@ -92,7 +87,7 @@ class CompetitiveLandscapeAgent:
         else:
             logger.warning(
                 "competitive_landscape_agent_unavailable",
-                reason="Missing AZURE_EXISTING_AGENT_ID or AZURE_EXISTING_AIPROJECT_ENDPOINT",
+                reason="Missing AZURE_EXISTING_AGENT_ID or AZURE_PROJECT_ENDPOINT",
             )
 
     @property

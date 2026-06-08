@@ -125,7 +125,7 @@ def get_azure_foundry_config() -> dict[str, Any]:
     return {
         "endpoint": os.getenv("AZURE_FOUNDRY_ENDPOINT", ""),
         "project": os.getenv("AZURE_FOUNDRY_PROJECT", ""),
-        "api_key": os.getenv("AZURE_FOUNDRY_API_KEY", "")
+        "api_key": os.getenv("AZURE_FOUNDRY_API_KEY", os.getenv("AZURE_OPENAI_API_KEY", ""))
     }
 
 
@@ -138,7 +138,7 @@ def get_mcp_config() -> dict[str, Any]:
     """
     return {
         "server_url": os.getenv("MCP_SERVER_URL", "https://mcp.ai.azure.com"),
-        "auth_token": os.getenv("MCP_AUTH_TOKEN")
+        "auth_token": os.getenv("MCP_AUTH_TOKEN", os.getenv("AZURE_OPENAI_API_KEY", ""))
     }
 
 
@@ -301,7 +301,7 @@ def get_search_config() -> dict[str, Any]:
     """Get search tool configuration."""
     return {
         "mcp_server_url": os.getenv("MCP_SERVER_URL", "https://mcp.ai.azure.com"),
-        "api_key": os.getenv("MCP_AUTH_TOKEN"),
+        "api_key": os.getenv("MCP_AUTH_TOKEN", os.getenv("AZURE_OPENAI_API_KEY", "")),
         "timeout": int(os.getenv("WEB_SEARCH_TIMEOUT", "15"))
     }
 

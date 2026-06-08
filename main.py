@@ -191,13 +191,13 @@ async def competitive_analysis(request: CompetitiveRequest):
     logger.info("api_competitive_start", query=request.query[:100])
 
     agent_id = os.environ.get("AZURE_EXISTING_AGENT_ID", "")
-    project_endpoint = os.environ.get("AZURE_EXISTING_AIPROJECT_ENDPOINT", "")
+    project_endpoint = os.environ.get("AZURE_PROJECT_ENDPOINT", "")
     api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
 
     if not agent_id or not project_endpoint:
         raise HTTPException(
             status_code=503,
-            detail="AZURE_EXISTING_AGENT_ID or AZURE_EXISTING_AIPROJECT_ENDPOINT not configured in .env"
+            detail="AZURE_EXISTING_AGENT_ID or AZURE_PROJECT_ENDPOINT not configured in .env"
         )
 
     try:
@@ -346,10 +346,10 @@ async def _run_pipeline(query: str) -> dict:
 async def _run_competitive(query: str) -> dict:
     """Helper: run competitive analysis and return a dict."""
     agent_id = os.environ.get("AZURE_EXISTING_AGENT_ID", "")
-    project_endpoint = os.environ.get("AZURE_EXISTING_AIPROJECT_ENDPOINT", "")
+    project_endpoint = os.environ.get("AZURE_PROJECT_ENDPOINT", "")
     api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
     if not agent_id or not project_endpoint:
-        return {"status": "skipped", "reason": "AZURE_EXISTING_AGENT_ID not set"}
+        return {"status": "skipped", "reason": "AZURE_EXISTING_AGENT_ID or AZURE_PROJECT_ENDPOINT not set"}
     try:
         from azure.ai.projects import AIProjectClient
         from azure.core.credentials import AzureKeyCredential
