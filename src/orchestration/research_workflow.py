@@ -12,8 +12,13 @@ Usage:
 """
 
 from typing import Any, TypedDict
+import uuid
+import os
+import sqlite3
 from datetime import datetime
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.store.sqlite import SqliteStore
 import structlog
 
 from ..agents.planner import PlannerAgent, ResearchPlan, SubTask, TaskType
@@ -69,7 +74,8 @@ class ResearchWorkflow:
         self,
         enable_a2a: bool = True,
         enable_mcp: bool = True,
-        max_retries: int = 3
+        max_retries: int = 3,
+        memory_db_path: str = "memory.sqlite"
     ):
         """
         Initialize the Research Workflow.
@@ -78,6 +84,7 @@ class ResearchWorkflow:
             enable_a2a: Enable A2A protocol for agent communication
             enable_mcp: Enable MCP tools for web search
             max_retries: Maximum number of retries for failed tasks
+            memory_db_path: Path to the SQLite memory database
         """
         self.enable_a2a = enable_a2a
         self.enable_mcp = enable_mcp
@@ -90,12 +97,16 @@ class ResearchWorkflow:
         self.writer = WriterAgent()
         self.competitive_analyst = CompetitiveLandscapeAgent()
 
+        # Set up memory db paths
+        self.memory_db_path = memory_db_path
+        self.store_db_path = "store.sqlite"
+        self.store = None
+
         # Initialize A2A components if enabled
         if enable_a2a:
             self._setup_a2a()
 
-        # Build the workflow graph
-        self.graph = self._build_graph()
+        # Graph compilation will happen at execution time for async context
 
         logger.info(
             "research_workflow_initialized",
@@ -119,7 +130,7 @@ class ResearchWorkflow:
             logger.warning("a2a_setup_failed", error=str(e))
             self.a2a_clients = {}
 
-    def _build_graph(self) -> StateGraph:
+    def _build_graph(self, checkpointer, store) -> StateGraph:
         """Build the LangGraph workflow state machine."""
         workflow = StateGraph(WorkflowState)
 
@@ -152,7 +163,7 @@ class ResearchWorkflow:
         # Error handling edge
         workflow.add_edge("handle_error", END)
 
-        return workflow.compile()
+        return workflow.compile(checkpointer=checkpointer, store=store)
 
     async def _plan_node(self, state: WorkflowState) -> dict[str, Any]:
         """Execute the planning node."""
@@ -160,6 +171,15 @@ class ResearchWorkflow:
 
         try:
             plan = None
+            
+            # Check long-term memory for previous strategies
+            past_memories = self.store.search(
+                ("research_plans",),
+                query=state["query"],
+                limit=1
+            )
+            if past_memories:
+                logger.info("found_past_research_plan", memory_id=past_memories[0].key)
             if self.enable_a2a and self.a2a_clients and "planner" in self.a2a_clients:
                 try:
                     logger.info("a2a_planner_decompose_task_start")
@@ -490,6 +510,18 @@ class ResearchWorkflow:
                     analysis_results=analysis_data
                 )
 
+            # Save the final report metadata to long-term memory
+            self.store.put(
+                ("research_plans",),
+                str(uuid.uuid4()),
+                {
+                    "query": state["query"],
+                    "report_id": report.metadata.report_id,
+                    "confidence_score": report.metadata.confidence_score,
+                    "conclusions": report.conclusions
+                }
+            )
+
             return {
                 "report": report,
                 "current_task": "report_generation",
@@ -550,7 +582,18 @@ class ResearchWorkflow:
 
         # Execute the workflow
         try:
-            final_state = await self.graph.ainvoke(initial_state)
+            config = {"configurable": {"thread_id": "demo_thread_123"}}
+            
+            with SqliteStore.from_conn_string(self.store_db_path) as store:
+                store.setup()
+                self.store = store
+                
+                async with AsyncSqliteSaver.from_conn_string(self.memory_db_path) as checkpointer:
+                    await checkpointer.setup()
+                    self.graph = self._build_graph(checkpointer, store)
+                    final_state = await self.graph.ainvoke(initial_state, config=config)
+                    
+                self.store = None
 
             # Build response
             response = {
@@ -684,12 +727,12 @@ async def main():
     if result.get("metadata"):
         print("\nCompleted Tasks:")
         for task in result["metadata"].get("completed_tasks", []):
-            print(f"  ✓ {task}")
+            print(f"  - {task}")
 
         if result["metadata"].get("failed_tasks"):
             print("\nFailed Tasks:")
             for task in result["metadata"].get("failed_tasks", []):
-                print(f"  ✗ {task}")
+                print(f"  - {task}")
 
     if result.get("report"):
         report = result["report"]
