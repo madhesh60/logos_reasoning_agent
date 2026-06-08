@@ -244,22 +244,40 @@ async def call_agent_with_toolbox(query: str) -> str:
 
 # ── Standalone demo ──────────────────────────────────────────────────────────
 async def main():
+    import sys
     print("=" * 64)
     print("Azure AI Foundry — MCP Toolbox Web-Search Demo")
     print("=" * 64)
 
     await create_agent_with_toolbox()
 
-    questions = [
-        "What tools are available in this toolbox?",
-        "Search the web: What are the latest EV policy updates in India 2024?",
-    ]
-
-    for q in questions:
-        answer = await call_agent_with_toolbox(q)
+    # Check if a query was passed as command-line arguments
+    if len(sys.argv) > 1:
+        query = " ".join(sys.argv[1:])
+        answer = await call_agent_with_toolbox(query)
         print("\n[agent] Answer:")
         print(answer)
-        print("-" * 64)
+        print("=" * 64)
+    else:
+        # Interactive Mode
+        print("Entering interactive mode. Type 'exit' or 'quit' to end.")
+        while True:
+            try:
+                # Use standard print/input for compatibility
+                print("\nAsk the web-search agent a question: ", end="", flush=True)
+                query = sys.stdin.readline().strip()
+                if not query:
+                    continue
+                if query.lower() in ("exit", "quit"):
+                    print("Exiting web-search demo.")
+                    break
+                answer = await call_agent_with_toolbox(query)
+                print("\n[agent] Answer:")
+                print(answer)
+                print("-" * 64)
+            except (KeyboardInterrupt, EOFError):
+                print("\nExiting web-search demo.")
+                break
 
 
 if __name__ == "__main__":
