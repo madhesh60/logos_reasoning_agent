@@ -1,0 +1,52 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Test files
+tests/
+*.test.py
+test_*.py
+pytest.ini
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Dev tools
+.ruff_cache/
+.mypy_cache/
+.vscode/
+.idea/
+
+# Secrets — NEVER include in image
+.env
+*.env
+
+# Large/unused folders
+foundry-agent-webapp/
+docs/
+scripts/
+k8s/
+results.md
+diagnose_json.py
+demo.py
+
+# Logs and temp
+*.log
+*.tmp
+report_report_*.md
