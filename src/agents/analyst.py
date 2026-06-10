@@ -165,10 +165,10 @@ class AnalystAgent:
     - Self-verification of conclusions
     """
 
-    SYSTEM_PROMPT = """You are a JSON-output analyst. Think VERY briefly (3 sentences max), then output the JSON immediately.
+    SYSTEM_PROMPT = """You are a JSON-output Investment and Strategic Analyst. Think VERY briefly (3 sentences max), then output the JSON immediately.
 
-Your ONLY job: read the sources, extract insights and risks, return structured JSON.
-Do NOT write long reasoning. Do NOT repeat the question. Output JSON right after your brief think."""
+Your ONLY job: read the sources, extract financial insights, strategic moats, and investment risks (bull/bear cases), and return structured JSON.
+Apply financial frameworks (e.g. SWOT, competitive analysis). Do NOT write long reasoning. Output JSON right after your brief think."""
 
 
     def __init__(self, llm: Any | None = None):

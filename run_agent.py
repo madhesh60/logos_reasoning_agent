@@ -306,7 +306,7 @@ def _save_report(report, md_content):
 
 # ── Interactive mode ──────────────────────────────────────────────────────────
 async def interactive_mode(stream: bool, model_override: str | None):
-    hdr("Research Assistant", "blue")
+    hdr("Business & Investment Research Assistant", "blue")
     console.print("[dim]Type your research question, or 'exit' to quit.[/]")
     
     while True:

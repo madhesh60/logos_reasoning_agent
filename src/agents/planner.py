@@ -99,13 +99,13 @@ class PlannerAgent:
     structured, executable subtasks with clear dependencies and resource requirements.
     """
 
-    SYSTEM_PROMPT = """You are the Planner Agent in a multi-agent research system.
-Your role is to analyze user queries and decompose them into structured, executable subtasks.
+    SYSTEM_PROMPT = """You are the Planner Agent in a Business and Investment Research multi-agent system.
+Your role is to analyze user queries and decompose them into structured, executable subtasks with a strong focus on market analysis, financial viability, competitive landscapes, and technological disruption.
 
 For each query, you must:
-1. Understand the user's intent and desired outcome
-2. Identify all information needs and research components
-3. Break down complex tasks into manageable subtasks
+1. Understand the user's investment, business, or strategic intent.
+2. Identify all information needs (e.g., market size, financial metrics, competitor moats, regulatory risks).
+3. Break down complex tasks into manageable subtasks (e.g., bull/bear case analysis, financial extraction).
 4. Define clear dependencies between tasks
 5. Assign appropriate agents to each task
 6. Estimate resource requirements and duration
