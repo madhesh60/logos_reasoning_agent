@@ -26,8 +26,7 @@ from ..agents.researcher import ResearcherAgent, ResearchResults
 from ..agents.analyst import AnalystAgent, AnalysisResults
 from ..agents.writer import WriterAgent, GeneratedReport, ReportFormat
 from ..agents.competitive_analysis import CompetitiveLandscapeAgent, CompetitiveAnalysisResult
-from ..a2a.client import A2AClient
-from ..a2a.server import A2AServer
+from ..foundry.client import FoundryAgentClient
 
 logger = structlog.get_logger(__name__)
 
@@ -117,15 +116,15 @@ class ResearchWorkflow:
         )
 
     def _setup_a2a(self):
-        """Set up A2A protocol for inter-agent communication."""
+        """Set up A2A protocol for real Azure Foundry Agents."""
         try:
             self.a2a_clients = {
-                "planner": A2AClient("http://localhost:8080/planner"),
-                "researcher": A2AClient("http://localhost:8080/researcher"),
-                "analyst": A2AClient("http://localhost:8080/analyst"),
-                "writer": A2AClient("http://localhost:8080/writer"),
+                "planner": FoundryAgentClient(agent_name="planner-agent"),
+                "researcher": FoundryAgentClient(agent_name="researcher-agent"),
+                "analyst": FoundryAgentClient(agent_name="analyst-agent"),
+                "writer": FoundryAgentClient(agent_name="writer-agent"),
             }
-            logger.info("a2a_clients_initialized", agents=list(self.a2a_clients.keys()))
+            logger.info("a2a_foundry_clients_initialized", agents=list(self.a2a_clients.keys()))
         except Exception as e:
             logger.warning("a2a_setup_failed", error=str(e))
             self.a2a_clients = {}
@@ -183,14 +182,10 @@ class ResearchWorkflow:
             if self.enable_a2a and self.a2a_clients and "planner" in self.a2a_clients:
                 try:
                     logger.info("a2a_planner_decompose_task_start")
-                    response = await self.a2a_clients["planner"].call_agent(
-                        method="decompose_task",
-                        params={"query": state["query"]}
-                    )
-                    if response.status == "success" and response.result:
-                        plan = ResearchPlan(**response.result)
-                    else:
-                        logger.warning("a2a_planner_decompose_task_failed", error=response.error)
+                    prompt = f"Please decompose the following research query into tasks:\n\nQuery: {state['query']}\n\nRespond strictly with JSON matching the ResearchPlan schema."
+                    result = await self.a2a_clients["planner"].call_agent_json(prompt)
+                    if result:
+                        plan = ResearchPlan(**result)
                 except Exception as e:
                     logger.warning("a2a_planner_decompose_task_exception", error=str(e))
 
@@ -233,14 +228,10 @@ class ResearchWorkflow:
         if self.enable_a2a and self.a2a_clients and "planner" in self.a2a_clients:
             try:
                 logger.info("a2a_planner_validate_plan_start")
-                response = await self.a2a_clients["planner"].call_agent(
-                    method="validate_plan",
-                    params={"plan": plan.model_dump()}
-                )
-                if response.status == "success" and response.result:
-                    validation = response.result
-                else:
-                    logger.warning("a2a_planner_validate_plan_failed", error=response.error)
+                prompt = f"Please validate the following research plan:\n\nPlan:\n{plan.model_dump_json(indent=2)}\n\nRespond strictly with JSON matching the validation schema (can_proceed, warnings, etc.)."
+                result = await self.a2a_clients["planner"].call_agent_json(prompt)
+                if result:
+                    validation = result
             except Exception as e:
                 logger.warning("a2a_planner_validate_plan_exception", error=str(e))
 
@@ -288,14 +279,10 @@ class ResearchWorkflow:
             if self.enable_a2a and self.a2a_clients and "researcher" in self.a2a_clients:
                 try:
                     logger.info("a2a_researcher_search_start")
-                    response = await self.a2a_clients["researcher"].call_agent(
-                        method="search",
-                        params={"query": state["query"], "max_results": 10}
-                    )
-                    if response.status == "success" and response.result:
-                        research_results = ResearchResults(**response.result)
-                    else:
-                        logger.warning("a2a_researcher_search_failed", error=response.error)
+                    prompt = f"Please perform research for the following query:\n\nQuery: {state['query']}\nMax Results: 10\n\nRespond strictly with JSON matching the ResearchResults schema."
+                    result = await self.a2a_clients["researcher"].call_agent_json(prompt)
+                    if result:
+                        research_results = ResearchResults(**result)
                 except Exception as e:
                     logger.warning("a2a_researcher_search_exception", error=str(e))
 
@@ -362,15 +349,12 @@ class ResearchWorkflow:
             analysis_results = None
             if self.enable_a2a and self.a2a_clients and "analyst" in self.a2a_clients:
                 try:
+                    import json
                     logger.info("a2a_analyst_analyze_start")
-                    response = await self.a2a_clients["analyst"].call_agent(
-                        method="analyze",
-                        params={"query": state["query"], "research_data": research_data}
-                    )
-                    if response.status == "success" and response.result:
-                        analysis_results = AnalysisResults(**response.result)
-                    else:
-                        logger.warning("a2a_analyst_analyze_failed", error=response.error)
+                    prompt = f"Please analyze the following research data for the query.\n\nQuery: {state['query']}\n\nResearch Data:\n{json.dumps(research_data, indent=2)}\n\nRespond strictly with JSON matching the AnalysisResults schema."
+                    result = await self.a2a_clients["analyst"].call_agent_json(prompt)
+                    if result:
+                        analysis_results = AnalysisResults(**result)
                 except Exception as e:
                     logger.warning("a2a_analyst_analyze_exception", error=str(e))
 
@@ -492,15 +476,12 @@ class ResearchWorkflow:
             report = None
             if self.enable_a2a and self.a2a_clients and "writer" in self.a2a_clients:
                 try:
+                    import json
                     logger.info("a2a_writer_generate_report_start")
-                    response = await self.a2a_clients["writer"].call_agent(
-                        method="generate_report",
-                        params={"query": state["query"], "analysis_results": analysis_data}
-                    )
-                    if response.status == "success" and response.result:
-                        report = GeneratedReport(**response.result)
-                    else:
-                        logger.warning("a2a_writer_generate_report_failed", error=response.error)
+                    prompt = f"Please write a comprehensive report based on the following analysis.\n\nQuery: {state['query']}\n\nAnalysis Data:\n{json.dumps(analysis_data, indent=2)}\n\nRespond strictly with JSON matching the GeneratedReport schema."
+                    result = await self.a2a_clients["writer"].call_agent_json(prompt)
+                    if result:
+                        report = GeneratedReport(**result)
                 except Exception as e:
                     logger.warning("a2a_writer_generate_report_exception", error=str(e))
 
