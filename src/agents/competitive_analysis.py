@@ -12,7 +12,7 @@ project_client = AIProjectClient(
 )
 
 my_agent = "competitive-landscape-researcher"
-my_version = "1"
+my_version = "2"
 
 openai_client = project_client.get_openai_client()
 

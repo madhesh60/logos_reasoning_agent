@@ -470,6 +470,39 @@ if __name__ == "__main__":
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
+from pydantic import BaseModel, Field
+from typing import Any
+
+# Active models and class definitions to support workflow imports and deserialization
+class SearchResult(BaseModel):
+    """Represents a single search result from web research."""
+    title: str = Field(..., description="Title of the search result")
+    url: str = Field(..., description="URL of the source")
+    snippet: str = Field(..., description="Brief excerpt from the source")
+    source_name: str = Field(..., description="Name of the source website")
+    published_date: str | None = Field(None, description="Publication date if available")
+    relevance_score: float = Field(..., description="Relevance to query (0-1)")
+    authority_score: float = Field(..., description="Source authority (0-1)")
+    raw_data: dict[str, Any] = Field(default_factory=dict, description="Raw data from search API")
+
+
+class ResearchResults(BaseModel):
+    """Complete research results from a search session."""
+    query: str = Field(..., description="The search query")
+    timestamp: str = Field(..., description="When the research was conducted")
+    total_sources: int = Field(..., description="Total number of sources found")
+    high_confidence_sources: list[SearchResult] = Field(..., description="High relevance sources")
+    medium_confidence_sources: list[SearchResult] = Field(..., description="Medium relevance sources")
+    sources_used: list[str] = Field(..., description="URLs of all sources consulted")
+    search_metadata: dict[str, Any] = Field(default_factory=dict, description="Search execution metadata")
+    confidence_score: float = Field(..., description="Overall confidence in results (0-1)")
+    gaps_identified: list[str] = Field(default_factory=list, description="Information gaps found")
+
+
+class ResearcherAgent:
+    """Dummy ResearcherAgent class to allow import of the agent package without code execution."""
+    pass
+
 
 endpoint = "https://reasoning-agent-hack2-resource.services.ai.azure.com/api/projects/reasoning-agent-hack2"
 
@@ -479,7 +512,7 @@ project_client = AIProjectClient(
 )
 
 my_agent = "researcher-agent"
-my_version = "6"
+my_version = "7"
 
 openai_client = project_client.get_openai_client()
 

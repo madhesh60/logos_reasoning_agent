@@ -817,6 +817,59 @@ if __name__ == "__main__":
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
+from pydantic import BaseModel, Field
+from enum import Enum
+from typing import Any
+
+# Active models and class definitions to support workflow imports and deserialization
+class ReportFormat(str, Enum):
+    """Available report output formats."""
+    JSON = "json"
+    MARKDOWN = "markdown"
+    HTML = "html"
+    EXECUTIVE_SUMMARY = "executive_summary"
+
+
+class ReportSection(BaseModel):
+    """Represents a section within the report."""
+    section_id: str = Field(..., description="Unique identifier for the section")
+    title: str = Field(..., description="Section title")
+    content: str = Field(..., description="Section content")
+    subsections: list["ReportSection"] = Field(default_factory=list, description="Child sections")
+    data: dict[str, Any] = Field(default_factory=dict, description="Structured data for section")
+    sources: list[str] = Field(default_factory=list, description="Source citations")
+
+
+class ReportMetadata(BaseModel):
+    """Metadata about the generated report."""
+    report_id: str = Field(..., description="Unique report identifier")
+    title: str = Field(..., description="Report title")
+    query: str = Field(..., description="Original research query")
+    created_at: str = Field(..., description="Report generation timestamp")
+    version: str = Field(default="1.0", description="Report version")
+    authors: list[str] = Field(default_factory=lambda: ["Research-to-Report Multi-Agent System"], description="Report authors")
+    confidence_score: float = Field(..., description="Overall confidence in the report (0-1)")
+    processing_time_seconds: float = Field(..., description="Time taken to generate report")
+    data_sources: int = Field(..., description="Number of data sources used")
+    agents_used: list[str] = Field(default_factory=list, description="Agents that contributed")
+
+
+class GeneratedReport(BaseModel):
+    """Complete generated report with all components."""
+    metadata: ReportMetadata = Field(..., description="Report metadata")
+    executive_summary: str = Field(..., description="High-level summary of findings")
+    sections: list[ReportSection] = Field(..., description="All report sections")
+    conclusions: list[str] = Field(..., description="Key conclusions")
+    recommendations: list[str] = Field(default_factory=list, description="Actionable recommendations")
+    citations: list[dict[str, Any]] = Field(..., description="All source citations")
+    appendices: list[dict[str, Any]] = Field(default_factory=list, description="Supplementary materials")
+    raw_data: dict[str, Any] = Field(default_factory=dict, description="Original analysis data")
+
+
+class WriterAgent:
+    """Dummy WriterAgent class to allow import of the agent package without code execution."""
+    pass
+
 
 endpoint = "https://reasoning-agent-hack2-resource.services.ai.azure.com/api/projects/reasoning-agent-hack2"
 
@@ -826,7 +879,7 @@ project_client = AIProjectClient(
 )
 
 my_agent = "writer-agent"
-my_version = "3"
+my_version = "4"
 
 openai_client = project_client.get_openai_client()
 

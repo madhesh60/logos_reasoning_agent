@@ -687,6 +687,139 @@ if __name__ == "__main__":
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
+from pydantic import BaseModel, Field, field_validator
+from enum import Enum
+from typing import Any
+
+# Active models and class definitions to support workflow imports and deserialization
+class RiskLevel(str, Enum):
+    """Risk severity levels."""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class EvidenceStrength(str, Enum):
+    """Evidence strength classification."""
+    STRONG = "strong"
+    MODERATE = "moderate"
+    WEAK = "weak"
+    ANECDOTAL = "anecdotal"
+
+
+class AnalysisInsight(BaseModel):
+    """A single insight from analysis."""
+    insight_id: str = Field(..., description="Unique identifier for the insight")
+    category: str = Field(..., description="Category or domain of the insight")
+    statement: str = Field(..., description="The insight statement")
+    confidence: float = Field(..., description="Confidence in the insight (0-1)")
+    evidence: list[str] = Field(default_factory=list, description="Supporting evidence")
+    evidence_strength: EvidenceStrength = Field(default=EvidenceStrength.MODERATE, description="Strength of evidence")
+    caveats: list[str] = Field(default_factory=list, description="Limitations or conditions")
+    source_count: int = Field(default=0, description="Number of sources supporting this")
+
+    @field_validator("evidence", "caveats", mode="before")
+    @classmethod
+    def coerce_list_to_str(cls, v):
+        """Convert list-of-dicts or mixed lists to list[str]."""
+        if not isinstance(v, list):
+            return [str(v)] if v else []
+        result = []
+        for item in v:
+            if isinstance(item, dict):
+                result.append(str(item.get("text") or item.get("value") or item.get("title") or next(iter(item.values()), "")))
+            elif item is not None:
+                result.append(str(item))
+        return result
+
+    @field_validator("evidence_strength", mode="before")
+    @classmethod
+    def coerce_evidence_strength(cls, v):
+        """Accept dict like {'value':'strong'} or any string."""
+        if isinstance(v, dict):
+            v = v.get("value") or v.get("strength") or next(iter(v.values()), "moderate")
+        if isinstance(v, str):
+            v = v.lower().strip()
+            mapping = {"strong": "strong", "moderate": "moderate", "weak": "weak", "anecdotal": "anecdotal"}
+            return mapping.get(v, "moderate")
+        return "moderate"
+
+
+class RiskAssessment(BaseModel):
+    """Risk assessment with multiple dimensions."""
+    risk_id: str = Field(..., description="Unique identifier for the risk")
+    title: str = Field(..., description="Risk title")
+    description: str = Field(..., description="Detailed description")
+    level: RiskLevel = Field(..., description="Risk severity level")
+    probability: float = Field(..., description="Probability of occurrence (0-1)")
+    impact: float = Field(..., description="Impact magnitude (0-1)")
+    risk_score: float = Field(..., description="Combined risk score (probability * impact)")
+    factors: list[str] = Field(default_factory=list, description="Contributing factors")
+    mitigation: list[str] = Field(default_factory=list, description="Potential mitigation strategies")
+    evidence: list[str] = Field(default_factory=list, description="Evidence supporting assessment")
+    confidence: float = Field(..., description="Confidence in assessment (0-1)")
+    data_quality_issues: list[str] = Field(default_factory=list, description="Data quality concerns")
+
+    @field_validator("factors", "mitigation", "evidence", "data_quality_issues", mode="before")
+    @classmethod
+    def coerce_list_to_str(cls, v):
+        """Convert list-of-dicts or mixed lists to list[str]."""
+        if not isinstance(v, list):
+            return [str(v)] if v else []
+        result = []
+        for item in v:
+            if isinstance(item, dict):
+                result.append(str(item.get("text") or item.get("value") or item.get("title") or next(iter(item.values()), "")))
+            elif item is not None:
+                result.append(str(item))
+        return result
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def coerce_level(cls, v):
+        """Accept dict or any string for level."""
+        if isinstance(v, dict):
+            v = v.get("value") or v.get("level") or next(iter(v.values()), "medium")
+        if isinstance(v, str):
+            return v.lower().strip()
+        return "medium"
+
+
+class AnalysisResults(BaseModel):
+    """Complete analysis results from research data."""
+    analysis_id: str = Field(..., description="Unique identifier for this analysis")
+    query: str = Field(..., description="Original research query")
+    timestamp: str = Field(..., description="When analysis was performed")
+    key_findings: list[AnalysisInsight] = Field(default_factory=list, description="Primary insights discovered")
+    risks_identified: list[RiskAssessment] = Field(default_factory=list, description="Risks evaluated")
+    patterns_detected: list[str] = Field(default_factory=list, description="Patterns or trends identified")
+    comparisons: dict[str, Any] = Field(default_factory=dict, description="Comparative analyses")
+    overall_confidence: float = Field(default=0.5, description="Overall confidence in analysis (0-1)")
+    reasoning_chain: list[str] = Field(default_factory=list, description="Steps in reasoning process")
+    data_sources_analyzed: int = Field(default=0, description="Number of sources analyzed")
+    methodology: str = Field(default="Multi-source analysis", description="Analysis methodology used")
+    limitations: list[str] = Field(default_factory=list, description="Analysis limitations")
+
+    @field_validator("patterns_detected", "reasoning_chain", "limitations", mode="before")
+    @classmethod
+    def coerce_str_list(cls, v):
+        """Ensure list[str] — convert any dict items to their string representation."""
+        if not isinstance(v, list):
+            return [str(v)] if v else []
+        result = []
+        for item in v:
+            if isinstance(item, dict):
+                result.append(str(item.get("text") or item.get("value") or next(iter(item.values()), "")))
+            elif item is not None:
+                result.append(str(item))
+        return result
+
+
+class AnalystAgent:
+    """Dummy AnalystAgent class to allow import of the agent package without code execution."""
+    pass
+
 
 endpoint = "https://reasoning-agent-hack2-resource.services.ai.azure.com/api/projects/reasoning-agent-hack2"
 
@@ -696,7 +829,7 @@ project_client = AIProjectClient(
 )
 
 my_agent = "analyst-agent"
-my_version = "3"
+my_version = "4"
 
 openai_client = project_client.get_openai_client()
 

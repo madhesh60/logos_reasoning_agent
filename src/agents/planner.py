@@ -725,6 +725,77 @@ if __name__ == "__main__":
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
+from pydantic import BaseModel, Field, field_validator
+from enum import Enum
+
+# Active models and class definitions to support workflow imports and deserialization
+class TaskType(str, Enum):
+    """Types of tasks that can be decomposed from a query."""
+    WEB_SEARCH = "web_search"
+    DOCUMENT_ANALYSIS = "document_analysis"
+    DATA_EXTRACTION = "data_extraction"
+    COMPARATIVE_ANALYSIS = "comparative_analysis"
+    RISK_ASSESSMENT = "risk_assessment"
+    SYNTHESIS = "synthesis"
+    FACT_CHECK = "fact_check"
+    REPORT_GENERATION = "report_generation"
+
+
+class TaskPriority(str, Enum):
+    """Priority levels for tasks."""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class SubTask(BaseModel):
+    """Represents a single subtask in the research plan."""
+    task_id: str = Field(..., description="Unique identifier for the task")
+    task_type: TaskType = Field(..., description="Type of task")
+    description: str = Field(..., description="Detailed description of what needs to be done")
+    priority: TaskPriority = Field(..., description="Task priority level")
+    depends_on: list[str] = Field(default_factory=list, description="Task IDs this task depends on")
+    estimated_duration_seconds: float = Field(default=30, description="Estimated time to complete (accepts int or float)")
+    agent: str = Field(..., description="Which agent should handle this task")
+    output_format: str = Field(default="json", description="Expected output format")
+    search_queries: list[str] = Field(default_factory=list, description="Search queries needed")
+    key_aspects: list[str] = Field(default_factory=list, description="Key aspects to investigate")
+
+    @field_validator("depends_on", "search_queries", "key_aspects", mode="before")
+    @classmethod
+    def coerce_to_list(cls, v):
+        """Coerce None, empty string, or non-list values to an empty list."""
+        if v is None or v == "" or v == "none" or v == "null":
+            return []
+        if isinstance(v, str):
+            stripped = v.strip()
+            if not stripped:
+                return []
+            return [x.strip() for x in stripped.split(",") if x.strip()]
+        if isinstance(v, list):
+            return [str(x) for x in v if x is not None and str(x).strip()]
+        return []
+
+
+class ResearchPlan(BaseModel):
+    """Complete research plan with all subtasks."""
+    plan_id: str = Field(..., description="Unique identifier for this plan")
+    original_query: str = Field(..., description="The original user query")
+    intent_summary: str = Field(..., description="Summary of the intended outcome")
+    total_tasks: int = Field(..., description="Total number of subtasks")
+    estimated_total_time_seconds: float = Field(..., description="Estimated total execution time (float allowed)")
+    tasks: list[SubTask] = Field(..., description="List of all subtasks")
+    execution_order: list[str] = Field(..., description="Recommended execution order (task IDs)")
+    required_tools: list[str] = Field(..., description="Tools needed for execution")
+    confidence_score: float = Field(..., description="Confidence in plan quality (0-1)")
+    reasoning: str = Field(..., description="Explanation of how the plan was derived")
+
+
+class PlannerAgent:
+    """Dummy PlannerAgent class to allow import of the agent package without code execution."""
+    pass
+
 
 endpoint = "https://reasoning-agent-hack2-resource.services.ai.azure.com/api/projects/reasoning-agent-hack2"
 
@@ -734,7 +805,7 @@ project_client = AIProjectClient(
 )
 
 my_agent = "planner-agent"
-my_version = "5"
+my_version = "8"
 
 openai_client = project_client.get_openai_client()
 

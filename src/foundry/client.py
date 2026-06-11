@@ -37,7 +37,7 @@ class FoundryAgentClient:
         def _sync_call():
             with AIProjectClient(
                 endpoint=self.endpoint,
-                credential=DefaultAzureCredential(),
+                credential=DefaultAzureCredential(exclude_interactive_browser_credential=True),
             ) as project_client:
                 openai_client = project_client.get_openai_client()
                 response = openai_client.responses.create(

@@ -117,8 +117,8 @@ class ResearchWorkflow:
         try:
             self.a2a_clients = {
                 "planner": FoundryAgentClient(agent_name="planner-agent", agent_version="5"),
-                "researcher": FoundryAgentClient(agent_name="researcher-agent", agent_version="6"),
-                "analyst": FoundryAgentClient(agent_name="analyst-agent", agent_version="3"),
+                "researcher": FoundryAgentClient(agent_name="researcher-agent", agent_version="7"),
+                "analyst": FoundryAgentClient(agent_name="analyst-agent", agent_version="4"),
                 "writer": FoundryAgentClient(agent_name="writer-agent", agent_version="3"),
             }
             logger.info("a2a_foundry_clients_initialized", agents=list(self.a2a_clients.keys()))

@@ -8,7 +8,7 @@ endpoint = "https://reasoning-agent-hack2-resource.services.ai.azure.com/api/pro
 
 project_client = AIProjectClient(
     endpoint=endpoint,
-    credential=DefaultAzureCredential(),
+    credential=DefaultAzureCredential(exclude_interactive_browser_credential=True),
 )
 
 my_agent = "industry-news-trend-scanner"
