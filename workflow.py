@@ -110,7 +110,7 @@ def execute_foundry_workflow(query: str):
         with project_client:
             workflow = {
                 "name": "investment-research-workflow",
-                "version": "4",
+                "version": "5",
             }
             
             try:

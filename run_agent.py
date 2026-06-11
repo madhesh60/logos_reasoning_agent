@@ -1,40 +1,36 @@
 #!/usr/bin/env python3
 """
-run_agent.py - One-command launcher for the Phi-4 Reasoning Multi-Agent System
-===============================================================================
-Usage:
-    python run_agent.py
-    python run_agent.py --query "What are the top AI trends in 2025?"
-    python run_agent.py --query "..." --model phi-4-reasoning   # switch to full model
-    python run_agent.py --stream                                # streaming output
-    python run_agent.py --model-test                           # test model connection only
-    python run_agent.py --search-test                          # test MCP web search only
+run_agent.py — Phi-4 · Azure Foundry Multi-Agent Research Terminal
+===================================================================
+  python run_agent.py                          # interactive mode
+  python run_agent.py -q "NLP trends 2025"    # single query
+  python run_agent.py --model-test             # verify model connection
+  python run_agent.py --search-test            # verify web search
 """
 
 import asyncio
 import argparse
 import sys
 import os
+import time
 from pathlib import Path
 from datetime import datetime
 
-# ── Fix Windows console encoding to support Unicode output ─────────────────────
+# ── Windows UTF-8 console ─────────────────────────────────────────────────────
 if sys.platform == "win32":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-# ── Bootstrap path & Configuration ────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-# ── Suppress Warnings & Noisy Logs ────────────────────────────────────────────
+# ── Suppress noise ────────────────────────────────────────────────────────────
 os.environ["LANGGRAPH_STRICT_MSGPACK"] = "true"
-import warnings
-warnings.filterwarnings("ignore")
+import warnings; warnings.filterwarnings("ignore")
 
 from src.utils.logging import configure_logging
 configure_logging(log_level="WARNING", json_format=False)
@@ -42,329 +38,338 @@ import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("azure").setLevel(logging.WARNING)
 
-# ── Rich UI Helpers ───────────────────────────────────────────────────────────
+# ── Rich UI ───────────────────────────────────────────────────────────────────
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.markdown import Markdown
 from rich.status import Status
 from rich.prompt import Prompt
+from rich.rule import Rule
+from rich.table import Table
+from rich.columns import Columns
+from rich import box
 
-console = Console()
+console = Console(highlight=True)
 
-def hdr(text: str, color: str = "cyan"):
-    console.print(Panel(f"[bold {color}]{text}[/]", expand=False, border_style=color))
+# ── Brand colours ─────────────────────────────────────────────────────────────
+BRAND   = "deep_sky_blue1"
+ACCENT  = "medium_purple1"
+SUCCESS = "bright_green"
+WARN    = "yellow"
+DANGER  = "bright_red"
+DIM     = "grey58"
 
-def ok(msg: str):   console.print(f"  [bold green]✓[/] {msg}")
-def warn(msg: str): console.print(f"  [bold yellow]⚠[/] {msg}")
-def err(msg: str):  console.print(f"  [bold red]✗[/] {msg}")
-def info(msg: str): console.print(f"  [dim]→[/] {msg}")
+def _banner():
+    console.print()
+    console.print(Panel.fit(
+        Text.assemble(
+            (" ◈ ", ACCENT),
+            ("FOUNDRY RESEARCH INTELLIGENCE", f"bold {BRAND}"),
+            (" ◈", ACCENT),
+            ("\n", ""),
+            ("  Phi-4 · Azure AI Foundry · Multi-Agent Pipeline  ", DIM),
+        ),
+        border_style=BRAND,
+        padding=(0, 3),
+    ))
+    console.print()
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+def ok(msg):   console.print(f"  [{SUCCESS}]✔[/]  {msg}")
+def warn(msg): console.print(f"  [{WARN}]⚠[/]  {msg}")
+def fail(msg): console.print(f"  [{DANGER}]✘[/]  {msg}")
+def info(msg): console.print(f"  [{DIM}]›[/]  {msg}")
+
+PIPELINE_STAGES = [
+    ("🧠 Planner",               "Decomposing your query into research tasks"),
+    ("🔍 Researcher",            "Fetching latest data from the web"),
+    ("📰 Industry-News Scanner", "Scanning real-time industry signals"),
+    ("⚔  Competitive Intel",     "Mapping competitive landscape"),
+    ("📊 Analyst",               "Extracting insights and risk factors"),
+    ("✍  Writer",                "Generating the structured report"),
+]
+
+# ── Args ─────────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Phi-4 Reasoning Multi-Agent — Research-to-Report Runner",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Foundry Research Intelligence — Multi-Agent Report Generator",
     )
-    p.add_argument("--query", "-q", help="Research query to process")
-    p.add_argument("--model", "-m", default=None,
-                   help="Override deployment name (e.g. phi-4-reasoning or phi-4-mini-reasoning)")
-    p.add_argument("--stream", action="store_true",
-                   help="Stream stage-by-stage output instead of waiting for full result")
-    p.add_argument("--model-test", action="store_true",
-                   help="Run only the Azure model connection test and exit")
-    p.add_argument("--search-test", action="store_true",
-                   help="Run only the MCP web-search tool test and exit")
-    p.add_argument("--format", choices=["markdown", "json", "summary"], default="markdown",
-                   help="Output format for the final report (default: markdown)")
+    p.add_argument("-q", "--query",       help="Research query")
+    p.add_argument("-m", "--model",       default=None, help="Override LLM deployment")
+    p.add_argument("--model-test",        action="store_true")
+    p.add_argument("--search-test",       action="store_true")
+    p.add_argument("--no-a2a",            action="store_true",
+                   help="Skip Foundry agents, use local Phi-4 only")
     return p.parse_args()
 
-# ── Model connection test ─────────────────────────────────────────────────────
-async def run_model_test(model_override: str | None = None):
-    hdr("Azure AI Foundry — Model Connection Test", "cyan")
-
+# ── Model test ────────────────────────────────────────────────────────────────
+async def run_model_test(model_override=None):
+    console.print(Rule(f"[{BRAND}]Model Connection Test", style=BRAND))
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
     api_key  = os.environ.get("AZURE_OPENAI_API_KEY", "")
     deploy   = model_override or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "phi-4-mini-reasoning")
 
-    if not endpoint or not api_key:
-        err("AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_API_KEY not set in .env")
-        return False
-
-    if endpoint.endswith("/chat/completions"):
-        endpoint = endpoint[:-len("/chat/completions")]
-
-    info(f"Connecting to endpoint: {endpoint}")
-    info(f"Using deployment: {deploy}")
+    info(f"Endpoint  : {endpoint[:60]}…")
+    info(f"Deployment: {deploy}")
 
     from openai import OpenAI
-    client = OpenAI(base_url=endpoint, api_key=api_key)
-
-    messages = [
-        {"role": "system", "content": "You are a concise reasoning assistant."},
-        {"role": "user", "content": "What are the top 3 investment risks in the Indian EV market? Give a short answer."},
-    ]
-
-    with console.status("[bold yellow]Sending test prompt...", spinner="dots"):
+    client = OpenAI(base_url=endpoint.rstrip("/"), api_key=api_key)
+    with console.status(f"[{BRAND}]Pinging model…", spinner="aesthetic"):
         try:
-            completion = client.chat.completions.create(
+            r = client.chat.completions.create(
                 model=deploy,
-                messages=messages,
-                max_tokens=900,
+                messages=[{"role":"user","content":"Reply with one sentence about AI in 2025."}],
+                max_tokens=120,
             )
-            msg = completion.choices[0].message
-            content_to_print = msg.content
-            if content_to_print is None:
-                # If there's no main content, show reasoning content or the finish reason
-                reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None)
-                if reasoning:
-                    content_to_print = f"[dim]Reasoning Trace:\n{reasoning}[/]\n\n[yellow]No final text content returned.[/]"
-                else:
-                    content_to_print = f"[yellow]No content returned (Finish Reason: {completion.choices[0].finish_reason})[/]"
-            console.print(Panel(content_to_print, title="Model Response", border_style="green"))
-            ok(f"Finish reason : {completion.choices[0].finish_reason}")
-            ok(f"Total tokens  : {completion.usage.total_tokens if completion.usage else 'N/A'}")
+            text = r.choices[0].message.content or "(no content)"
+            console.print(Panel(text, title="Model Reply", border_style=SUCCESS))
+            ok(f"Tokens used: {r.usage.total_tokens if r.usage else 'N/A'}")
             return True
         except Exception as e:
-            err(f"Model call failed: {e}")
-            return False
+            fail(str(e)); return False
 
-# ── MCP web-search test ───────────────────────────────────────────────────────
+# ── Search test ───────────────────────────────────────────────────────────────
 async def run_search_test():
-    hdr("MCP / Azure Foundry — Web Search Tool Test", "magenta")
-
-    project_ep = os.environ.get("AZURE_PROJECT_ENDPOINT", "")
-    if not project_ep:
-        warn("AZURE_PROJECT_ENDPOINT not set — will use simulated fallback results")
-
+    console.print(Rule(f"[{ACCENT}]Web Search Test", style=ACCENT))
     from src.mcp_tools.web_search import MCPWebSearchTool
-
     tool = MCPWebSearchTool(
-        azure_project_endpoint=project_ep or None,
-        azure_toolbox_name=os.environ.get("AZURE_TOOLBOX_NAME", "reasoning-agent-web-search"),
-        azure_toolbox_version=os.environ.get("AZURE_TOOLBOX_VERSION", "1"),
-        azure_openai_api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
+        azure_project_endpoint=os.getenv("AZURE_PROJECT_ENDPOINT"),
+        azure_toolbox_name=os.getenv("AZURE_TOOLBOX_NAME","reasoning-agent-web-search"),
+        azure_toolbox_version=os.getenv("AZURE_TOOLBOX_VERSION","1"),
+        azure_openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     )
-
-    query = "What is the market size and investment potential for computational linguistics and NLP software?"
-    info(f"Search query: {query}")
-
-    with console.status("[bold yellow]Searching the web...", spinner="dots"):
-        response = await tool.search(query, max_results=5)
-
-    console.print(Panel(
-        f"[bold]Query:[/] {response.query}\n"
-        f"[bold]Results found:[/] {response.total_results}\n"
-        f"[bold]Execution time:[/] {response.execution_time_ms:.0f} ms",
-        title="Search Results", border_style="blue"
-    ))
-    
-    for i, r in enumerate(response.results, 1):
-        console.print(f"\n  [bold cyan]{i}. {r.title}[/]")
-        console.print(f"     [dim]Source:[/] {r.source}")
-        console.print(f"     [dim]URL:[/] {r.url}")
-        snippet = r.snippet[:120].replace("\n", " ")
-        console.print(f"     [dim]Snippet:[/] {snippet}…")
-    
-    console.print("")
+    q = "Top NLP breakthroughs 2025"
+    info(f"Searching: {q}")
+    with console.status(f"[{ACCENT}]Searching the web…", spinner="aesthetic"):
+        resp = await tool.search(q, max_results=4)
+    for i, r in enumerate(resp.results, 1):
+        console.print(f"\n  [{BRAND}]{i}. {r.title}[/]")
+        console.print(f"     [{DIM}]{r.url}[/]")
+        console.print(f"     {r.snippet[:120]}…")
     await tool.close()
 
-# ── Full pipeline ─────────────────────────────────────────────────────────────
-async def execute_workflow(query: str, model_override: str | None = None, stream: bool = True, session_id: str | None = None):
-    hdr("Research Agent", "green")
-    console.print(f"[bold]Query:[/] {query}")
+# ── Animated pipeline stages display ─────────────────────────────────────────
+def _show_pipeline_running():
+    """Show the 6-agent pipeline as a live progress list."""
+    table = Table(box=None, show_header=False, padding=(0,1))
+    table.add_column(justify="right", style=DIM, no_wrap=True)
+    table.add_column(style="bold")
+    table.add_column(style=DIM)
+    for i, (name, desc) in enumerate(PIPELINE_STAGES):
+        table.add_row(f"{i+1}.", name, desc)
+    console.print(Panel(
+        table,
+        title=f"[{BRAND}]Active Pipeline[/]",
+        border_style=BRAND,
+        padding=(0, 1),
+    ))
+
+# ── Report printer ────────────────────────────────────────────────────────────
+def _print_report(report, query: str, elapsed: float, path: str):
+    """Render the GeneratedReport beautifully in the terminal."""
+
+    console.print()
+    console.print(Rule(f"[{SUCCESS}]  RESEARCH REPORT  ", style=SUCCESS))
+    console.print()
+
+    # ── Header stats bar ──────────────────────────────────────────────────────
+    stats = Table(box=box.SIMPLE, show_header=False, padding=(0,2))
+    stats.add_column(style=f"bold {BRAND}", no_wrap=True)
+    stats.add_column(style="white")
+    conf = report.metadata.confidence_score
+    conf_color = SUCCESS if conf >= 0.8 else (WARN if conf >= 0.6 else DANGER)
+    stats.add_row("⏱  Generated in", f"{elapsed:.1f}s")
+    stats.add_row("🔀  Path",         path.replace("_", " ").title())
+    stats.add_row("📊  Confidence",   f"[{conf_color}]{conf:.0%}[/]")
+    stats.add_row("🆔  Report ID",    report.metadata.report_id)
+    console.print(Panel(stats, border_style=DIM, padding=(0,1)))
+    console.print()
+
+    # ── Title & executive summary ─────────────────────────────────────────────
+    title = report.metadata.title or query
+    console.print(Panel(
+        Markdown(f"# {title}\n\n{report.executive_summary}"),
+        border_style=BRAND, padding=(1, 2),
+        title=f"[bold {BRAND}]Executive Summary[/]",
+    ))
+    console.print()
+
+    # ── Main sections ─────────────────────────────────────────────────────────
+    for sec in report.sections:
+        if sec.content and sec.title:
+            console.print(Panel(
+                Markdown(sec.content),
+                title=f"[bold {ACCENT}]{sec.title}[/]",
+                border_style=ACCENT,
+                padding=(0, 2),
+            ))
+            console.print()
+
+    # ── Conclusions ───────────────────────────────────────────────────────────
+    if report.conclusions:
+        md = "\n".join(f"- {c}" for c in report.conclusions)
+        console.print(Panel(
+            Markdown(md),
+            title=f"[bold {SUCCESS}]Key Conclusions[/]",
+            border_style=SUCCESS,
+            padding=(0, 2),
+        ))
+        console.print()
+
+    # ── Recommendations ───────────────────────────────────────────────────────
+    if report.recommendations:
+        md = "\n".join(f"{i}. {r}" for i, r in enumerate(report.recommendations, 1))
+        console.print(Panel(
+            Markdown(md),
+            title=f"[bold {WARN}]Strategic Recommendations[/]",
+            border_style=WARN,
+            padding=(0, 2),
+        ))
+        console.print()
+
+    # ── Citations / Resources ─────────────────────────────────────────────────
+    if report.citations:
+        ref_md = "\n".join(
+            f"- [{c.get('title','Link')}]({c.get('url','#')})  — *{c.get('source','')}*"
+            for c in report.citations[:8]
+        )
+        console.print(Panel(
+            Markdown(ref_md),
+            title=f"[bold {DIM}]Resources & References[/]",
+            border_style=DIM,
+            padding=(0, 2),
+        ))
+        console.print()
+
+    # ── Save ──────────────────────────────────────────────────────────────────
+    _save_report(report, query)
+
+def _save_report(report, query: str):
+    try:
+        slug  = query[:40].lower().replace(" ", "_").replace("/","")
+        fname = ROOT / f"report_{slug}_{report.metadata.report_id}.md"
+        lines = [
+            f"# {report.metadata.title or query}",
+            f"\n**Confidence:** {report.metadata.confidence_score:.0%}  "
+            f"| **Generated:** {report.metadata.generated_at}  "
+            f"| **ID:** `{report.metadata.report_id}`\n",
+            "---\n",
+            "## Executive Summary\n",
+            report.executive_summary, "\n",
+        ]
+        for sec in report.sections:
+            lines += [f"\n## {sec.title}\n", sec.content, "\n"]
+        if report.conclusions:
+            lines += ["\n## Conclusions\n"] + [f"- {c}\n" for c in report.conclusions]
+        if report.recommendations:
+            lines += ["\n## Recommendations\n"] + [f"{i}. {r}\n" for i, r in enumerate(report.recommendations, 1)]
+        if report.citations:
+            lines += ["\n## Resources\n"] + [
+                f"- [{c.get('title','Link')}]({c.get('url','#')})\n"
+                for c in report.citations[:10]
+            ]
+        fname.write_text("\n".join(lines), encoding="utf-8")
+        ok(f"Report saved → {fname.name}")
+    except Exception as e:
+        warn(f"Could not save: {e}")
+
+# ── Execute one query ─────────────────────────────────────────────────────────
+async def execute_query(query: str, model_override=None, enable_a2a: bool = True):
+    from src.utils.config import load_environment
+    load_environment()
 
     if model_override:
         os.environ["AZURE_OPENAI_DEPLOYMENT"] = model_override
 
-    from src.utils.config import load_environment
-    load_environment()
-
     from src.orchestration.research_workflow import ResearchWorkflow
-    workflow = ResearchWorkflow(enable_a2a=True, enable_mcp=True, max_retries=2)
+    workflow = ResearchWorkflow(enable_a2a=enable_a2a, max_retries=1)
 
-    STAGE_LABELS = {
-        "plan":          "Planner: Decomposing query into sub-tasks...",
-        "validate_plan": "Validator: Checking plan quality...",
-        "research":      "Researcher: Executing web searches...",
-        "analyze":       "Analyst: Extracting insights & risks...",
-        "write_report":  "Writer: Generating structured report...",
-    }
+    console.print()
+    console.print(Panel(
+        f"[bold]{query}[/]",
+        title=f"[{BRAND}]Research Query[/]",
+        border_style=BRAND, padding=(0, 2),
+    ))
+    console.print()
 
-    if stream:
-        status = Status("[bold green]Initializing workflow...", spinner="dots")
-        status.start()
-        try:
-            async for update in workflow.execute_streaming(query, session_id=session_id):
-                stage  = update.get("stage", "unknown")
-                state_status = update.get("status", "")
-                
-                if state_status == "in_progress":
-                    label = STAGE_LABELS.get(stage, f"Processing {stage}...")
-                    status.update(f"[bold cyan]{label}")
-                elif state_status == "completed" and stage != "complete":
-                    if stage == "validate_plan":
-                        status.stop()
-                        state_data = update.get("state", {})
-                        plan = state_data.get("plan")
-                        if plan:
-                            console.print(Panel(
-                                "\n".join(f"[bold cyan]{i+1}.[/] {t.description} [dim]({t.agent})[/]" for i, t in enumerate(plan.tasks)),
-                                title="[bold magenta]Proposed Research Plan[/]",
-                                border_style="magenta"
-                            ))
-                            console.print("\n[bold yellow]Allow running this research plan?[/]")
-                            console.print("  [green]1.[/] Yes, allow this time")
-                            console.print("  [red]2.[/] No (abort workflow)")
-                        else:
-                            console.print("\n[bold yellow]No research plan generated (Planner failed/skipped). Proceed directly to research?[/]")
-                            console.print("  [green]1.[/] Yes, proceed to research")
-                            console.print("  [red]2.[/] No (abort workflow)")
-                        
-                        choice = Prompt.ask("\nSelect option", choices=["1", "2"], default="1")
-                        if choice == "2":
-                            console.print("[dim]Workflow aborted by user.[/]")
-                            break
-                        
-                        console.print("")
-                        status.start()
-                elif stage == "complete":
-                    status.stop()
-                    state = update.get("result", {})
-                    _print_report(query, state)
-                elif state_status == "error":
-                    status.stop()
-                    for e in update.get("errors", []):
-                        err(str(e))
-        finally:
-            status.stop()
-    else:
-        with console.status("[bold cyan]Executing workflow... (this may take a minute)", spinner="dots"):
-            t0 = datetime.utcnow()
-            result = await workflow.execute(query, session_id=session_id)
-            elapsed = (datetime.utcnow() - t0).total_seconds()
-        _print_result(query, result, elapsed)
+    _show_pipeline_running()
+    console.print()
 
-# ── Pretty-print helpers ──────────────────────────────────────────────────────
-def _print_result(query: str, result: dict, elapsed: float):
-    status = result.get("status", "unknown")
-    meta   = result.get("metadata", {})
+    t_start = time.time()
+    with console.status(
+        f"[{BRAND}]Calling Foundry Writer Agent — generating your report…[/]",
+        spinner="aesthetic",
+        spinner_style=BRAND,
+    ):
+        result = await workflow.execute(query)
 
-    if "completed" in status:
-        ok(f"Workflow completed in {elapsed:.1f}s")
-    else:
-        err(f"Workflow failed after {elapsed:.1f}s")
-
-    errs = meta.get("errors", [])
-    if errs:
-        for e in errs:
-            warn(str(e))
+    elapsed = time.time() - t_start
 
     report = result.get("report")
-    if report:
-        _print_report_object(report)
+    if report and report.executive_summary:
+        ok(f"Workflow complete in {elapsed:.1f}s  ·  path: {result.get('path_used','?')}")
+        _print_report(report, query, elapsed, result.get("path_used","?"))
     else:
-        err("No report generated")
+        fail("No report generated. Check logs.")
+        if result.get("error"):
+            warn(result["error"])
 
-def _print_report(query: str, state: dict):
-    report = state.get("report")
-    if report:
-        _print_report_object(report)
-    else:
-        warn("No report in final state")
+# ── Interactive REPL ──────────────────────────────────────────────────────────
+async def interactive_mode(model_override=None, enable_a2a: bool = True):
+    _banner()
 
-def _print_report_object(report):
-    md_lines = [
-        f"# {report.metadata.title}",
-        f"**Confidence:** {report.metadata.confidence_score:.0%}  |  **Report ID:** `{report.metadata.report_id}`",
-        "---",
-        "## Executive Summary",
-        report.executive_summary,
-    ]
-    for s in report.sections:
-        md_lines.append(f"## {s.title}")
-        md_lines.append(s.content)
-    
-    if report.conclusions:
-        md_lines.append("## Conclusions")
-        for c in report.conclusions:
-            md_lines.append(f"- {c}")
-            
-    if report.recommendations:
-        md_lines.append("## Recommendations")
-        for r in report.recommendations:
-            md_lines.append(f"- {r}")
-            
-    if report.citations:
-        md_lines.append("## References")
-        for c in report.citations[:6]:
-            md_lines.append(f"- [{c.get('title', 'Link')}]({c.get('url', '#')}) - {c.get('source', '')}")
+    console.print(Panel(
+        Text.assemble(
+            (f"  {'Command':<18}  Description\n", f"bold {BRAND}"),
+            (f"  {'─'*18}  {'─'*40}\n", DIM),
+            (f"  {'<your question>':<18}  ", ""),     ("Run full research pipeline\n", ""),
+            (f"  {'model-test':<18}  ", ""),          ("Verify model connection\n", ""),
+            (f"  {'search-test':<18}  ", ""),         ("Verify web search\n", ""),
+            (f"  {'exit / quit':<18}  ", ""),         ("Exit the terminal", ""),
+        ),
+        title=f"[{ACCENT}]Commands[/]",
+        border_style=ACCENT,
+        padding=(0, 2),
+    ))
+    console.print()
 
-    md_content = "\n\n".join(md_lines)
-    console.print("\n")
-    console.print(Panel(Markdown(md_content), border_style="green", padding=(1, 2)))
-    
-    # Save markdown to file
-    _save_report(report, md_content)
-
-def _save_report(report, md_content):
-    try:
-        fname = ROOT / f"report_{report.metadata.report_id}.md"
-        fname.write_text(md_content, encoding="utf-8")
-        ok(f"Report saved to {fname.name}")
-    except Exception as e:
-        warn(f"Could not save report: {e}")
-
-# ── Interactive mode ──────────────────────────────────────────────────────────
-async def interactive_mode(stream: bool, model_override: str | None):
-    hdr("Business & Investment Research Assistant", "blue")
-    console.print("[dim]Type your research question, or 'exit' to quit.[/]")
-    
-    import uuid
-    session_id = str(uuid.uuid4())
-    
     while True:
         try:
-            query = Prompt.ask("\n[bold cyan]Query[/]")
-            query = query.strip()
+            query = Prompt.ask(f"\n  [{BRAND}]>[/]")
         except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]Goodbye![/]")
-            break
+            console.print(f"\n  [{DIM}]Goodbye ◈[/]\n"); break
 
+        query = query.strip()
         if not query:
             continue
-        if query.lower() in ("exit", "quit", "q"):
-            console.print("[dim]Goodbye![/]")
-            break
+        if query.lower() in ("exit", "quit", "q", "bye"):
+            console.print(f"\n  [{DIM}]Goodbye ◈[/]\n"); break
         if query.lower() == "model-test":
-            await run_model_test(model_override)
-            continue
+            await run_model_test(model_override); continue
         if query.lower() == "search-test":
-            await run_search_test()
-            continue
+            await run_search_test(); continue
 
         try:
-            await execute_workflow(query, model_override, stream=stream, session_id=session_id)
-        except Exception as e:
-            err(f"Pipeline error: {e}")
+            await execute_query(query, model_override, enable_a2a=enable_a2a)
+        except Exception as exc:
+            fail(f"Pipeline error: {exc}")
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Entry ─────────────────────────────────────────────────────────────────────
 async def main():
     args = parse_args()
 
     if args.model_test:
-        ok_val = await run_model_test(args.model)
-        sys.exit(0 if ok_val else 1)
-
+        await run_model_test(args.model); sys.exit(0)
     if args.search_test:
-        await run_search_test()
-        sys.exit(0)
+        await run_search_test(); sys.exit(0)
+
+    enable_a2a = not args.no_a2a
 
     if args.query:
-        await execute_workflow(args.query, args.model, stream=args.stream)
+        _banner()
+        await execute_query(args.query, args.model, enable_a2a=enable_a2a)
     else:
-        await interactive_mode(args.stream, args.model)
-
+        await interactive_mode(args.model, enable_a2a=enable_a2a)
 
 if __name__ == "__main__":
     asyncio.run(main())

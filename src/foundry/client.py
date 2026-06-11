@@ -1,217 +1,157 @@
 """
-Azure AI Foundry Agent Client
-==============================
-Calls Azure AI Foundry hosted agents using the Responses API
-with agent_reference (name + version).
+Foundry Agent Client — thread-based execution for tool-enabled agents
+======================================================================
+Uses azure-ai-agents AgentsClient with create_thread_and_process_run()
+which correctly handles Bing web search and MCP toolbox calls.
 
-This is the ONLY calling strategy used — it matches exactly what works
-in the Foundry portal sample code:
-
-    openai_client.responses.create(
-        input=[{"role": "user", "content": "..."}],
-        extra_body={
-            "agent_reference": {
-                "name":    "planner-agent",
-                "version": "9",
-                "type":    "agent_reference"
-            }
-        },
-    )
-
-All 6 Foundry agents are called this way.
+Strategy:
+  • planner / researcher / analyst  → AgentsClient thread+run (GUID-based, tool-safe)
+  • writer                          → AIProjectClient Responses API (no tools, faster)
 """
-
-from __future__ import annotations
 
 import os
 import asyncio
 import structlog
-from typing import Any
+from typing import Optional, Dict, Any
+import json_repair
+
+from azure.identity import DefaultAzureCredential
 
 logger = structlog.get_logger(__name__)
 
-import time
-from azure.core.credentials import AccessToken
-
-class CustomApiKeyCredential:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-
-    def get_token(self, *scopes, **kwargs) -> AccessToken:
-        return AccessToken(self.api_key, int(time.time()) + 3600)
-
-_MAX_RETRIES = 3
-_RETRY_DELAY = 2.0
+_ENDPOINT = os.getenv(
+    "AZURE_PROJECT_ENDPOINT",
+    "https://reasoning-agent-hack2-resource.services.ai.azure.com/api/projects/reasoning-agent-hack2",
+)
 
 
+# ---------------------------------------------------------------------------
+# Strategy A — AgentsClient thread+run  (for tool-enabled agents)
+# ---------------------------------------------------------------------------
+def _call_via_thread(agent_id: str, prompt: str) -> str:
+    """
+    Calls a Foundry agent by GUID using the thread-based Agents API.
+    Handles Bing search / MCP tools correctly.
+    Requires: pip install azure-ai-agents
+    """
+    from azure.ai.agents import AgentsClient
+    from azure.ai.agents.models import AgentThreadCreationOptions, ThreadMessageOptions
+
+    with AgentsClient(
+        endpoint=_ENDPOINT,
+        credential=DefaultAzureCredential(exclude_interactive_browser_credential=True),
+    ) as client:
+        run = client.create_thread_and_process_run(
+            agent_id=agent_id,
+            thread=AgentThreadCreationOptions(
+                messages=[
+                    ThreadMessageOptions(role="user", content=prompt)
+                ]
+            ),
+        )
+
+        if run.status == "failed":
+            raise RuntimeError(
+                f"Agent run failed (id={agent_id}): {getattr(run, 'last_error', run.status)}"
+            )
+
+        # Fetch messages from the completed thread
+        messages = client.messages.list(thread_id=run.thread_id)
+        for msg in messages:
+            if msg.role == "assistant":
+                parts = []
+                for block in msg.content:
+                    if hasattr(block, "text"):
+                        parts.append(block.text.value)
+                if parts:
+                    return "\n".join(parts)
+
+        raise RuntimeError(f"No assistant reply found for agent {agent_id}")
+
+
+# ---------------------------------------------------------------------------
+# Strategy B — Responses API  (for no-tool agents like writer)
+# ---------------------------------------------------------------------------
+def _call_via_responses(name: str, version: str, prompt: str) -> str:
+    """
+    Calls a Foundry agent via the Responses API with agent_reference.
+    Works for agents WITHOUT attached tools.
+    """
+    from azure.ai.projects import AIProjectClient
+
+    with AIProjectClient(
+        endpoint=_ENDPOINT,
+        credential=DefaultAzureCredential(exclude_interactive_browser_credential=True),
+    ) as client:
+        oc = client.get_openai_client()
+        resp = oc.responses.create(
+            input=[{"role": "user", "content": prompt}],
+            extra_body={
+                "agent_reference": {
+                    "name":    name,
+                    "version": version,
+                    "type":    "agent_reference",
+                }
+            },
+        )
+        return resp.output_text
+
+
+# ---------------------------------------------------------------------------
+# FoundryAgentClient — public interface
+# ---------------------------------------------------------------------------
 class FoundryAgentClient:
     """
-    Client for calling a single Azure AI Foundry hosted agent
-    via the Responses API (name + version).
-
-    Args:
-        agent_name:    The exact name shown in Foundry portal
-                       e.g. "planner-agent", "researcher-agent"
-        agent_version: The version number shown in Foundry portal
-                       e.g. "9", "7", "4"
-        agent_id:      Ignored — kept only for backwards compatibility.
+    Unified client that selects the right call strategy automatically:
+      • agent_id provided → AgentsClient thread+run  (tool-enabled agents)
+      • agent_id is None  → Responses API name+version (no-tool agents)
     """
 
     def __init__(
         self,
         agent_name: str,
         agent_version: str,
-        agent_id: str | None = None,   # kept for compat, not used
-    ) -> None:
-        self.agent_name = agent_name
+        agent_id: Optional[str] = None,
+    ):
+        self.agent_name    = agent_name
         self.agent_version = agent_version
+        self.agent_id      = agent_id
 
-        # Project endpoint — e.g.
-        # https://reasoning-agent-hack2-resource.services.ai.azure.com/api/projects/reasoning-agent-hack2
-        self._endpoint: str = os.getenv("AZURE_PROJECT_ENDPOINT", "")
-        self._api_key: str = os.getenv("AZURE_OPENAI_API_KEY", "")
+    def _sync_call(self, prompt: str) -> str:
+        if self.agent_id:
+            return _call_via_thread(self.agent_id, prompt)
+        return _call_via_responses(self.agent_name, self.agent_version, prompt)
 
-        logger.info(
-            "foundry_client_initialized",
-            agent=agent_name,
-            version=agent_version,
-            endpoint_set=bool(self._endpoint),
-        )
+    async def call_agent_raw(self, prompt: str, max_retries: int = 2) -> str:
+        loop = asyncio.get_running_loop()
+        last: Exception | None = None
 
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
+        strategy = "thread" if self.agent_id else "responses"
+        logger.info("calling_foundry_agent", agent=self.agent_name, strategy=strategy)
 
-    async def call_agent_json(self, prompt: str) -> dict[str, Any]:
-        """
-        Send a prompt to the Foundry agent, return parsed JSON dict.
-        Retries up to _MAX_RETRIES times on transient errors.
-        Raises on final failure so the caller falls back to local agent.
-        """
-        last_error: Exception | None = None
-
-        for attempt in range(1, _MAX_RETRIES + 1):
+        for attempt in range(1, max_retries + 2):
             try:
-                logger.info(
-                    "foundry_agent_call_start",
-                    agent=self.agent_name,
-                    version=self.agent_version,
-                    attempt=attempt,
-                )
-                result = await self._call_responses_api(prompt)
-                logger.info(
-                    "foundry_agent_call_success",
-                    agent=self.agent_name,
-                    attempt=attempt,
-                )
+                result = await loop.run_in_executor(None, self._sync_call, prompt)
+                logger.info("foundry_agent_success", agent=self.agent_name)
                 return result
-
             except Exception as exc:
-                last_error = exc
+                last = exc
                 logger.warning(
-                    "foundry_agent_call_failed",
-                    agent=self.agent_name,
-                    attempt=attempt,
-                    error=str(exc),
+                    "foundry_agent_failed",
+                    agent=self.agent_name, attempt=attempt, error=str(exc)
                 )
-                if attempt < _MAX_RETRIES:
-                    await asyncio.sleep(_RETRY_DELAY * attempt)
+                if attempt <= max_retries:
+                    await asyncio.sleep(min(2 ** attempt, 20))
 
-        logger.error(
-            "foundry_agent_all_retries_exhausted",
-            agent=self.agent_name,
-            error=str(last_error),
-        )
-        raise last_error  # type: ignore[misc]
+        logger.error("foundry_agent_exhausted", agent=self.agent_name, error=str(last))
+        raise last  # type: ignore[misc]
 
-    # ------------------------------------------------------------------
-    # Responses API call
-    # ------------------------------------------------------------------
-
-    async def _call_responses_api(self, prompt: str) -> dict[str, Any]:
-        """
-        Call the Foundry Responses API exactly as shown in the portal sample:
-
-            openai_client.responses.create(
-                input=[{"role": "user", "content": "..."}],
-                extra_body={
-                    "agent_reference": {
-                        "name": "planner-agent",
-                        "version": "9",
-                        "type": "agent_reference"
-                    }
-                },
-            )
-
-        The agent's own system prompt (set in Foundry portal) handles
-        instructions — we only need to send the user message.
-        """
-        from azure.ai.projects import AIProjectClient
-
-        # Build the project client using CustomApiKeyCredential
-        project_client = AIProjectClient(
-            endpoint=self._endpoint,
-            credential=CustomApiKeyCredential(self._api_key),
-        )
-
-        # Get the OpenAI-compatible client attached to this Foundry project
-        openai_client = project_client.get_openai_client()
-
-        # Add JSON instruction to the user prompt so the agent outputs clean JSON
-        json_prompt = (
-            f"{prompt}\n\n"
-            f"IMPORTANT: Respond ONLY with valid JSON. "
-            f"No prose. No markdown fences. No <think> blocks. "
-            f"Start with {{ and end with }}."
-        )
-
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: openai_client.responses.create(
-                input=[{"role": "user", "content": json_prompt}],
-                extra_body={
-                    "agent_reference": {
-                        "name":    self.agent_name,
-                        "version": self.agent_version,
-                        "type":    "agent_reference",
-                    }
-                },
-            ),
-        )
-
-        reply: str = getattr(response, "output_text", None) or ""
-        if not reply.strip():
-            raise ValueError(
-                f"Foundry agent '{self.agent_name}' v{self.agent_version} "
-                f"returned empty output_text."
-            )
-
-        return _parse_json_reply(reply, self.agent_name)
-
-
-# ---------------------------------------------------------------------------
-# JSON parser
-# ---------------------------------------------------------------------------
-
-def _parse_json_reply(text: str, agent_name: str) -> dict[str, Any]:
-    """Parse JSON from agent reply using the battle-tested clean_and_parse_json."""
-    try:
-        from src.utils.config import clean_and_parse_json
-        result = clean_and_parse_json(text)
-        if not isinstance(result, dict):
-            raise ValueError(
-                f"Expected JSON object from '{agent_name}', "
-                f"got {type(result).__name__}"
-            )
-        return result
-    except Exception as exc:
-        logger.warning(
-            "foundry_json_parse_failed",
-            agent=agent_name,
-            error=str(exc),
-            preview=text[:300],
-        )
-        raise ValueError(
-            f"Could not parse JSON from '{agent_name}': {exc}"
-        ) from exc
+    async def call_agent_json(self, prompt: str) -> Dict[str, Any]:
+        raw = await self.call_agent_raw(prompt)
+        try:
+            parsed = json_repair.loads(raw)
+            if not isinstance(parsed, dict):
+                raise ValueError(f"Expected dict, got {type(parsed).__name__}")
+            return parsed
+        except Exception as exc:
+            raise ValueError(f"JSON parse failed: {exc}\nRaw: {raw[:200]}") from exc
