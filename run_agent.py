@@ -213,10 +213,13 @@ async def execute_workflow(query: str, model_override: str | None = None, stream
                                 title="[bold magenta]Proposed Research Plan[/]",
                                 border_style="magenta"
                             ))
-                        
-                        console.print("\n[bold yellow]Allow running this research plan?[/]")
-                        console.print("  [green]1.[/] Yes, allow this time")
-                        console.print("  [red]2.[/] No (abort workflow)")
+                            console.print("\n[bold yellow]Allow running this research plan?[/]")
+                            console.print("  [green]1.[/] Yes, allow this time")
+                            console.print("  [red]2.[/] No (abort workflow)")
+                        else:
+                            console.print("\n[bold yellow]No research plan generated (Planner failed/skipped). Proceed directly to research?[/]")
+                            console.print("  [green]1.[/] Yes, proceed to research")
+                            console.print("  [red]2.[/] No (abort workflow)")
                         
                         choice = Prompt.ask("\nSelect option", choices=["1", "2"], default="1")
                         if choice == "2":

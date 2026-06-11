@@ -11,17 +11,15 @@ project_client = AIProjectClient(
     credential=DefaultAzureCredential(),
 )
 
-my_agent = "researcher-agent"
-my_version = "7"
+my_agent = "{agent name}"
+my_version = "version {1,2,3...}"
 
 openai_client = project_client.get_openai_client()
 
+# Reference the agent to get a response
 response = openai_client.responses.create(
-    input=[{"role": "user", "content": "Tell me what you can help with."}],
+    input=[{"role": "user", "content": {query}}],
     extra_body={"agent_reference": {"name": my_agent, "version": my_version, "type": "agent_reference"}},
 )
 
 print(f"Response output: {response.output_text}")
-
-# Backward-compatible imports for other files
-from src.agents import ResearcherAgent, ResearchResults, SearchResult

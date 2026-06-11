@@ -41,10 +41,26 @@ if __name__ == "__main__":
 
     print(f"\nSending query to {my_agent} (version {my_version}): '{query}'...")
 
-    response = openai_client.responses.create(
-        input=[{"role": "user", "content": query}],
-        extra_body={"agent_reference": {"name": my_agent, "version": my_version, "type": "agent_reference"}},
-    )
+    import time
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = openai_client.responses.create(
+                input=[{"role": "user", "content": query}],
+                extra_body={"agent_reference": {"name": my_agent, "version": my_version, "type": "agent_reference"}},
+            )
+            break
+        except Exception as e:
+            if "429" in str(e) or "RateLimitError" in str(e) or "rate limit" in str(e).lower():
+                if attempt < max_retries:
+                    wait_time = attempt * 10
+                    print(f"\nRate limit exceeded (429). Retrying in {wait_time} seconds (Attempt {attempt}/{max_retries})...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"\nFailed after {max_retries} attempts due to RateLimitError.")
+                    raise e
+            else:
+                raise e
 
     print("\n" + "=" * 60)
     print("AGENT RESPONSE")
