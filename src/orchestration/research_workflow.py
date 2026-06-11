@@ -207,7 +207,13 @@ class ResearchWorkflow:
         self.enable_a2a  = enable_a2a
         self.max_retries = max_retries
 
-    async def execute_streaming(self, query: str, session_id: str | None = None):
+    async def execute_streaming(
+        self,
+        query: str,
+        session_id: str | None = None,
+        memory_context: str = "",
+        user_clarifications: str = "",
+    ):
         stages = [
             "planner", "researcher", "industry_news",
             "competitive", "analyst", "writer",
@@ -224,22 +230,41 @@ class ResearchWorkflow:
             yield {"stage": s, "status": "in_progress", "label": labels[s]}
 
         try:
-            result = await self.execute(query, session_id=session_id)
+            result = await self.execute(
+                query,
+                session_id=session_id,
+                memory_context=memory_context,
+                user_clarifications=user_clarifications,
+            )
             yield {"stage": "complete", "status": "completed", "result": result}
         except Exception as exc:
             yield {"stage": "complete", "status": "error", "errors": [str(exc)]}
 
-    async def execute(self, query: str, session_id: str | None = None) -> dict[str, Any]:
+    async def execute(
+        self,
+        query: str,
+        session_id: str | None = None,
+        memory_context: str = "",
+        user_clarifications: str = "",
+    ) -> dict[str, Any]:
         t0 = datetime.utcnow()
         logger.info("pipeline_start", query=query[:80])
 
-        context = ""   # Accumulated context passed stage-to-stage
+        # Build the personalisation prefix once; every agent receives it
+        _prefix = ""
+        if memory_context:
+            _prefix += memory_context + "\n"
+        if user_clarifications:
+            _prefix += user_clarifications + "\n"
+
+        context = ""   # Accumulated stage output passed stage-to-stage
         stages_ok: list[str] = []
         stages_failed: list[str] = []
 
         if self.enable_a2a:
             # ── Stage 1: Planner ───────────────────────────────────────────────
             plan_prompt = (
+                f"{_prefix}"
                 f"Research Query: {query}\n\n"
                 "Decompose this into a structured research plan with sub-tasks covering: "
                 "current trends, key players, market data, risks, and opportunities. "
@@ -323,6 +348,7 @@ class ResearchWorkflow:
 
             # ── Stage 6: Writer ────────────────────────────────────────────────
             writer_prompt = (
+                f"{_prefix}"
                 f"Write a comprehensive, professional research report on:\n\n"
                 f"TOPIC: {query}\n\n"
                 f"Use all the following research and analysis:\n{context}\n\n"
