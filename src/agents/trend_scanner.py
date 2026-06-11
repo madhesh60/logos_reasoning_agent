@@ -11,8 +11,8 @@ project_client = AIProjectClient(
     credential=DefaultAzureCredential(),
 )
 
-my_agent = "competitive-landscape-researcher"
-my_version = "1"
+my_agent = "industry-news-trend-scanner"
+my_version = "5"
 
 openai_client = project_client.get_openai_client()
 

@@ -1,3 +1,4 @@
+'''
 """
 Writer Agent - Structured Report Generation
 
@@ -289,47 +290,31 @@ PATTERNS & TRENDS:
 REASONING PATHWAY:
 {reasoning_text}
 
-Generate a structured JSON response. Replace all placeholder values in the template below with your actual, highly detailed, professional analysis. Do NOT use generic placeholder text like "Detailed findings here".
+Your output must be a single, valid JSON object matching the following structure. Do NOT output any schemas, template descriptions, or placeholders. Output ONLY the final, fully-written report.
 
-JSON Schema to populate:
-{{
-  "title": "Comprehensive Title for the Research Report",
-  "executive_summary": "A detailed 2-3 paragraph executive summary and investment thesis synthesizing the key findings, risks, and strategic takeaways...",
-  "sections": [
-    {{
-      "section_id": "market_landscape",
-      "title": "Market Landscape & Key Findings",
-      "content": "A highly detailed, professional, multi-paragraph section detailing findings, market trends, opportunities, and evidence...",
-      "data": {{}},
-      "sources": []
-    }},
-    {{
-      "section_id": "risk_analysis",
-      "title": "Comprehensive Risk Assessment",
-      "content": "A detailed analysis of identified risks, their strategic impact, and viability of proposed mitigations...",
-      "data": {{}},
-      "sources": []
-    }},
-    {{
-      "section_id": "strategic_outlook",
-      "title": "Strategic Outlook & Recommendations",
-      "content": "Actionable strategic and investment advice for decision makers, outlining the bull/bear case...",
-      "data": {{}},
-      "sources": []
-    }}
-  ],
-  "conclusions": [
-    "Key conclusion 1 derived from research...",
-    "Key conclusion 2 derived from research..."
-  ],
-  "recommendations": [
-    "Specific, actionable recommendation 1...",
-    "Specific, actionable recommendation 2..."
-  ],
-  "appendices": []
-}}
+Required JSON structure keys and types:
+- "title": (string) A specific, professional report title.
+- "executive_summary": (string) A detailed, multi-paragraph (at least 2 paragraphs) executive summary and investment thesis, synthesizing the market landscape, findings, and strategic takeaways.
+- "sections": (array of objects) Must contain exactly 3 objects:
+  1. Market Landscape & Key Findings (section_id: "market_landscape"): A highly detailed, professional, multi-paragraph analysis of the market size, segmentations, growth drivers, and specific statistics from the search inputs.
+  2. Comprehensive Risk Assessment (section_id: "risk_analysis"): A detailed analysis of the identified risks, their potential business/financial impact, and viability of the proposed mitigations.
+  3. Strategic Outlook & Recommendations (section_id: "strategic_outlook"): Actionable strategic and investment advice for decision makers, outlining both the bull and bear cases.
+  Each section object in the array must have:
+    - "section_id": (string)
+    - "title": (string)
+    - "content": (string) The full, detailed analysis text (minimum 150 words).
+    - "data": (object) Empty dictionary {{}}
+    - "sources": (array of strings) List of source names referenced in this section.
+- "conclusions": (array of strings) Key conclusions derived from the research.
+- "recommendations": (array of strings) Actionable strategic recommendations.
+- "appendices": (array of objects) Empty list []
 
-Return ONLY valid JSON. Start with {{ and end with }}"""
+Format the output strictly as a single JSON object. Start with {{ and end with }}. Do NOT wrap in markdown code blocks.
+Double-check:
+1. Ensure all text values are fully written out (minimum 150 words per section).
+2. Do not use generic text or placeholders.
+3. The response must start with {{ and end with }}. Do NOT wrap it in any other structure.
+"""
 
         response = await self.llm.ainvoke([
             SystemMessage(content=self.SYSTEM_PROMPT),
@@ -341,8 +326,32 @@ Return ONLY valid JSON. Start with {{ and end with }}"""
             report_data = clean_and_parse_json(response.content)
 
             if isinstance(report_data, list):
-                if len(report_data) > 0 and isinstance(report_data[0], dict):
-                    report_data = report_data[0]
+                # Reconstruct dict from fragments if they were split
+                base_dict = {}
+                for item in report_data:
+                    if isinstance(item, dict):
+                        # Merge keys, but prefer non-placeholder values
+                        for k, v in item.items():
+                            if not v:
+                                continue
+                            val_str = str(v)
+                            # Check if it's a template placeholder
+                            is_placeholder = any(p in val_str for p in ("Comprehensive Title", "A detailed 2-3 paragraph", "detailed, professional, multi-paragraph", "Detailed findings here", "placeholder", "derived from research"))
+                            if not is_placeholder or not base_dict.get(k):
+                                base_dict[k] = v
+                    elif isinstance(item, list):
+                        # It could be sections, conclusions, or recommendations list
+                        if len(item) > 0:
+                            first = item[0]
+                            if isinstance(first, dict) and ("section_id" in first or "title" in first):
+                                base_dict["sections"] = item
+                            elif isinstance(first, str):
+                                if "conclusions" not in base_dict:
+                                    base_dict["conclusions"] = item
+                                else:
+                                    base_dict["recommendations"] = item
+                if base_dict:
+                    report_data = base_dict
                 else:
                     report_data = self._create_fallback_report(query)
             if not isinstance(report_data, dict):
@@ -801,3 +810,30 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
+'''
+
+# Before running the sample:
+#    pip install azure-ai-projects>=2.1.0
+
+from azure.identity import DefaultAzureCredential
+from azure.ai.projects import AIProjectClient
+
+endpoint = "https://reasoning-agent-hack2-resource.services.ai.azure.com/api/projects/reasoning-agent-hack2"
+
+project_client = AIProjectClient(
+    endpoint=endpoint,
+    credential=DefaultAzureCredential(),
+)
+
+my_agent = "writer-agent"
+my_version = "3"
+
+openai_client = project_client.get_openai_client()
+
+# Reference the agent to get a response
+response = openai_client.responses.create(
+    input=[{"role": "user", "content": "Tell me what you can help with."}],
+    extra_body={"agent_reference": {"name": my_agent, "version": my_version, "type": "agent_reference"}},
+)
+
+print(f"Response output: {response.output_text}")
