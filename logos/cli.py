@@ -2,16 +2,18 @@
 logos/cli.py — LOGOS command-line interface
 ============================================
 
-The entry point for the `logos` command.
+Entry point: logos = "logos.cli:main"
 
-Usage:
-    logos                          # interactive session
-    logos -q "your query"          # single-shot query
-    logos --no-a2a -q "..."        # local model only, no Foundry agents
-    logos --model-test             # verify model connection
+After  pip install logos-research  →  run  logos
 
-This CLI is story-driven: it guides the user through a research investigation
-the way an intelligence analyst briefs a client — methodical, direct, no noise.
+Features
+--------
+  - First-run setup wizard (provider, API key, model)
+  - Persistent memory  (~/.logos/memory.db)
+  - Human-in-the-loop clarifying questions before research
+  - 4-stage research pipeline  (works with any OpenAI-compatible API)
+  - Optional Azure AI Foundry 6-agent pipeline (for Foundry users)
+  - Story-driven narrative CLI — no emojis, intelligence-briefing tone
 """
 
 from __future__ import annotations
@@ -30,105 +32,53 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-# ── Resolve project root (for local development) ──────────────────────────────
-_CLI_DIR = Path(__file__).resolve().parent          # logos/
-_ROOT    = _CLI_DIR.parent                          # project root
+# ── Path setup (local dev: project root on sys.path) ─────────────────────────
+_CLI_DIR = Path(__file__).resolve().parent
+_ROOT    = _CLI_DIR.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 # ── Load .env — CWD first, then ~/.logos/.env ─────────────────────────────────
 from dotenv import load_dotenv
-
 _LOGOS_HOME = Path.home() / ".logos"
 _LOGOS_HOME.mkdir(parents=True, exist_ok=True)
-
-_loaded = load_dotenv(Path.cwd() / ".env", override=False)
-if not _loaded:
-    load_dotenv(_LOGOS_HOME / ".env", override=False)
+load_dotenv(Path.cwd() / ".env", override=False)
+load_dotenv(_LOGOS_HOME / ".env", override=False)
 
 # ── Silence noisy loggers ─────────────────────────────────────────────────────
 import warnings
 warnings.filterwarnings("ignore")
 import logging
-logging.getLogger("httpx").setLevel(logging.ERROR)
-logging.getLogger("azure").setLevel(logging.ERROR)
-logging.getLogger("openai").setLevel(logging.ERROR)
+for _log in ("httpx", "azure", "openai", "urllib3"):
+    logging.getLogger(_log).setLevel(logging.ERROR)
 
-# ── Rich UI ───────────────────────────────────────────────────────────────────
+# ── Rich ──────────────────────────────────────────────────────────────────────
 from rich.console import Console
 from rich.panel import Panel
-from rich.text import Text
 from rich.markdown import Markdown
 from rich.rule import Rule
-from rich.table import Table
 from rich import box
 
 console = Console(highlight=False)
 
-# Restrained colour palette — no emojis, no colour overload
-C_RULE    = "grey46"
-C_TITLE   = "bold white"
-C_ACCENT  = "steel_blue1"
-C_DIM     = "grey46"
-C_OK      = "green3"
-C_WARN    = "yellow3"
-C_ERR     = "red3"
-C_LABEL   = "white"
-C_BORDER  = "grey30"
+C_RULE   = "grey46"
+C_TITLE  = "bold white"
+C_DIM    = "grey46"
+C_OK     = "green3"
+C_WARN   = "yellow3"
+C_ERR    = "red3"
+C_LABEL  = "white"
+C_ACCENT = "steel_blue1"
+C_BORDER = "grey30"
 
-# ── Imports (after path setup) ────────────────────────────────────────────────
+# ── Imports ───────────────────────────────────────────────────────────────────
+from logos.config   import Config, PROVIDERS
 from logos.memory.store import MemoryStore
 from logos.hitl.questioner import generate_questions
+from logos.research.pipeline import ResearchPipeline, STAGES
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
-class DynamicStatus:
-    """Async context manager that dynamically updates console status with changing phrases."""
-    def __init__(self, console, initial_msg: str, phrases: list[str], spinner="line", spinner_style="grey46"):
-        self.console = console
-        self.initial_msg = initial_msg
-        self.phrases = phrases
-        self.spinner = spinner
-        self.spinner_style = spinner_style
-        self._status = None
-        self._task = None
-
-    async def __aenter__(self):
-        self._status = self.console.status(
-            self.initial_msg,
-            spinner=self.spinner,
-            spinner_style=self.spinner_style
-        )
-        self._status.__enter__()
-        self._task = asyncio.create_task(self._update_loop())
-        return self._status
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        if self._status:
-            self._status.__exit__(exc_type, exc_val, exc_tb)
-
-    async def _update_loop(self):
-        import time
-        start_time = time.time()
-        idx = 0
-        try:
-            while True:
-                await asyncio.sleep(4)
-                elapsed = int(time.time() - start_time)
-                phrase = self.phrases[idx % len(self.phrases)]
-                self._status.update(
-                    f"  [{self.spinner_style}]{phrase} ({elapsed}s elapsed)...[/]"
-                )
-                idx += 1
-        except asyncio.CancelledError:
-            pass
-
+# ── UI helpers ────────────────────────────────────────────────────────────────
 
 def _rule(title: str = "") -> None:
     if title:
@@ -136,27 +86,28 @@ def _rule(title: str = "") -> None:
     else:
         console.print(Rule(style=C_RULE))
 
-
-def _print(msg: str, indent: int = 2) -> None:
+def _p(msg: str, indent: int = 2) -> None:
     console.print(" " * indent + msg)
-
 
 def _blank() -> None:
     console.print()
 
+def _ok(msg: str)   -> None: _p(f"[{C_OK}]{msg}[/]")
+def _warn(msg: str) -> None: _p(f"[{C_WARN}]{msg}[/]")
+def _err(msg: str)  -> None: _p(f"[{C_ERR}]{msg}[/]")
+def _dim(msg: str)  -> None: _p(f"[{C_DIM}]{msg}[/]")
 
-def _ok(msg: str)   -> None: _print(f"[{C_OK}]{msg}[/]")
-def _warn(msg: str) -> None: _print(f"[{C_WARN}]{msg}[/]")
-def _err(msg: str)  -> None: _print(f"[{C_ERR}]{msg}[/]")
-def _dim(msg: str)  -> None: _print(f"[{C_DIM}]{msg}[/]")
-
-
-def _ask(prompt_text: str) -> str:
-    """Prompt for a single line of input. Returns stripped string."""
-    console.print()
+def _ask(prompt_text: str, password: bool = False) -> str:
+    _blank()
+    if password:
+        import getpass
+        console.print(f"  [{C_ACCENT}]{prompt_text}[/]", end="")
+        try:
+            return getpass.getpass("  ").strip()
+        except Exception:
+            return ""
     try:
-        val = console.input(f"  [{C_ACCENT}]{prompt_text}[/]  ")
-        return val.strip()
+        return console.input(f"  [{C_ACCENT}]{prompt_text}[/]  ").strip()
     except (KeyboardInterrupt, EOFError):
         raise
 
@@ -166,33 +117,117 @@ def _ask(prompt_text: str) -> str:
 def _banner() -> None:
     _blank()
     console.print(f"  [{C_TITLE}]L O G O S[/]   [{C_DIM}]— Autonomous Research Intelligence[/]")
-    _print(f"[{C_DIM}]{'─' * 54}[/]")
+    _p(f"[{C_DIM}]{'─' * 54}[/]")
     _blank()
 
 
-# ── First-time setup ──────────────────────────────────────────────────────────
+# ── Setup wizard ──────────────────────────────────────────────────────────────
 
-async def _first_time_setup(memory: MemoryStore) -> None:
-    _blank()
-    _print(f"[{C_LABEL}]This is your first session.[/]")
-    _blank()
-    _dim(
-        "A few questions to personalize your experience.\n"
-        "  Press Enter to skip any."
-    )
+async def run_setup(cfg: Config, *, force: bool = False) -> None:
+    """
+    Interactive setup wizard. Runs on first install or `logos setup`.
+    Saves provider, API key, and model to ~/.logos/config.json.
+    """
+    _rule("Setup")
     _blank()
 
-    name = _ask("Your name  >")
-    role = _ask("Your role  (e.g. analyst, founder, researcher)  >")
-    org  = _ask("Organization or project (optional)  >")
+    if not force and cfg.is_configured():
+        _p(f"[{C_LABEL}]LOGOS is already configured.[/]")
+        _dim(f"Provider : {cfg.provider_label}")
+        _dim(f"Model    : {cfg.model}")
+        _blank()
+        change = _ask("Reconfigure?  [y/N]  >")
+        if change.lower() not in ("y", "yes"):
+            return
+
+    _blank()
+    _p(f"[{C_LABEL}]Choose your AI provider.[/]")
+    _blank()
+
+    provider_keys = list(PROVIDERS.keys())
+    for i, (key, info) in enumerate(PROVIDERS.items(), 1):
+        label    = info["label"]
+        advanced = "  (advanced)" if info.get("advanced") else ""
+        _p(f"  [{C_DIM}]{i}[/]  {label}{advanced}")
+
+    _blank()
+    choice_raw = _ask("Provider  [1-6]  >")
+    try:
+        idx = int(choice_raw) - 1
+        if not (0 <= idx < len(provider_keys)):
+            raise ValueError
+        provider_key = provider_keys[idx]
+    except ValueError:
+        _err("Invalid choice. Defaulting to OpenAI.")
+        provider_key = "openai"
+
+    prov = PROVIDERS[provider_key]
+    cfg.set("provider", provider_key)
+    _blank()
+
+    # API key
+    if provider_key == "ollama":
+        cfg.set("api_key", "ollama")
+        _ok("Ollama selected. No API key needed.")
+    elif provider_key == "foundry":
+        _dim("Azure AI Foundry requires two endpoint URLs.")
+        ep = _ask("Azure project endpoint  >")
+        cfg.set("azure_project_endpoint", ep)
+        cfg.set("api_key", "foundry")
+    else:
+        hint = prov.get("key_hint", "Your API key")
+        _p(f"[{C_DIM}]Get your key from the provider dashboard.[/]")
+        key = _ask(f"API key  ({hint})  >", password=True)
+        cfg.set("api_key", key)
+
+        if prov.get("needs_endpoint") and provider_key == "azure":
+            ep = _ask("Azure endpoint  (https://your-resource.openai.azure.com)  >")
+            cfg.set("azure_endpoint", ep)
+
+    # Model
+    models = prov.get("models", [])
+    default_model = prov.get("default_model", "")
+    if models and provider_key != "foundry":
+        _blank()
+        _p(f"[{C_LABEL}]Choose a model.[/]")
+        for i, m in enumerate(models, 1):
+            tag = "  (default)" if m == default_model else ""
+            _p(f"  [{C_DIM}]{i}[/]  {m}{tag}")
+        m_choice = _ask(f"Model  [1-{len(models)}  or type name]  (Enter = {default_model})  >")
+        if not m_choice:
+            cfg.set("model", default_model)
+        else:
+            try:
+                mi = int(m_choice) - 1
+                cfg.set("model", models[mi] if 0 <= mi < len(models) else default_model)
+            except ValueError:
+                cfg.set("model", m_choice)  # allow custom model name
+
+    cfg.save()
+    _blank()
+    _ok(f"Setup complete.  Provider: {cfg.provider_label}  |  Model: {cfg.model}")
+    _blank()
+
+
+# ── First-time user profile ───────────────────────────────────────────────────
+
+async def _user_profile_setup(memory: MemoryStore) -> None:
+    _blank()
+    _p(f"[{C_LABEL}]Before your first investigation, a few quick questions.[/]")
+    _dim("These help LOGOS personalise every report. Press Enter to skip any.")
+    _blank()
+
+    name   = _ask("Your name  >")
+    role   = _ask("Role or function  (e.g. founder, analyst, researcher)  >")
+    org    = _ask("Organization or project  >")
     domain = _ask("Primary domain of research  (e.g. AI, fintech, biotech)  >")
 
     _blank()
-    _print(f"[{C_LABEL}]Preferred report depth:[/]")
-    _print(f"  [{C_DIM}]1[/]  Concise — executive-level summaries")
-    _print(f"  [{C_DIM}]2[/]  Detailed — full analysis with evidence")
-    depth_choice = _ask("Choice  [1/2]  >")
-    depth = "concise" if depth_choice.strip() == "1" else "detailed"
+    _p(f"[{C_LABEL}]Preferred report depth:[/]")
+    _dim("  1   Concise — executive-level summaries")
+    _dim("  2   Detailed — full analysis with evidence")
+    depth_raw = _ask("Choice  [1/2]  >")
+    depth = "concise" if depth_raw.strip() == "1" else "detailed"
 
     kwargs: dict[str, str] = {"depth_preference": depth}
     if name:   kwargs["name"]         = name
@@ -201,421 +236,435 @@ async def _first_time_setup(memory: MemoryStore) -> None:
     if domain: kwargs["domain"]       = domain
 
     memory.set_profile(**kwargs)
-
     _blank()
-    _ok("Profile saved.")
-    _dim("LOGOS will remember your preferences across sessions.")
+    _ok("Profile saved. LOGOS will personalise every report to your context.")
     _blank()
     _rule()
 
 
 # ── Session greeting ──────────────────────────────────────────────────────────
 
-def _greet(memory: MemoryStore) -> None:
+def _greet(memory: MemoryStore, cfg: Config) -> None:
     profile    = memory.get_user_profile()
     recent     = memory.get_recent_queries(3)
     total      = memory.total_query_count()
     session_no = memory.session_number()
     entities   = memory.get_tracked_entities(4)
     now_str    = datetime.now().strftime("%A, %d %B %Y  |  %H:%M")
+    name       = profile.get("name", "")
 
-    name = profile.get("name", "")
-    greeting_line = f"Session {session_no}  |  {now_str}"
+    session_line = f"Session {session_no}  |  {now_str}"
     if name:
-        greeting_line += f"  |  Welcome back, {name}"
+        session_line += f"  |  Welcome back, {name}"
+    session_line += f"  |  {cfg.provider_label}  /  {cfg.model}"
 
-    _print(f"[{C_DIM}]{greeting_line}[/]")
+    _p(f"[{C_DIM}]{session_line}[/]")
     _blank()
 
     if total > 0:
         _dim(f"Your research history spans {total} {'query' if total == 1 else 'queries'}.")
-
         if entities:
             top = ", ".join(e["name"] for e in entities[:3])
             _dim(f"Frequently investigated: {top}.")
-
         if recent:
             _dim(f"Last query: \"{recent[0]['query'][:70]}\".")
 
     _blank()
 
 
-# ── Human-in-the-loop question flow ──────────────────────────────────────────
+# ── Human-in-the-loop ─────────────────────────────────────────────────────────
 
-async def _run_hitl(query: str, memory: MemoryStore) -> str:
-    """
-    Ask the user 2-3 clarifying questions before dispatching the research team.
-    Returns a formatted string of the Q&A pairs for the agent context.
-    """
+async def _run_hitl(query: str, memory: MemoryStore, cfg: Config) -> str:
     _blank()
     _rule("Investigation received")
     _blank()
-    _print(f"[{C_LABEL}]Before dispatching the research team, a few clarifying questions.[/]")
-    _dim("Your answers will shape the depth and direction of the analysis.")
+    _p(f"[{C_LABEL}]Before the research begins, a few clarifying questions.[/]")
+    _dim("Your answers will shape the depth and direction of the report.")
     _blank()
 
     memory_ctx = memory.build_context_string() if not memory.is_first_run() else ""
 
-    hitl_phrases = [
-        "Preparing questions... Reading your prompt",
-        "Preparing questions... Understanding the agent's purpose",
-        "Preparing questions... Identifying evaluation dimensions",
-        "Preparing questions... Cooking up questions",
-        "Preparing questions... Checking for blind spots",
-        "Preparing questions... Adding a pinch of quality",
-    ]
-
-    async with DynamicStatus(
-        console,
-        f"  [{C_DIM}]Preparing questions...[/]",
-        hitl_phrases,
-        spinner="line",
-        spinner_style=C_DIM,
-    ):
-        questions = await generate_questions(query, memory_ctx, max_questions=3)
+    with console.status(f"  [{C_DIM}]Preparing questions...[/]", spinner="line", spinner_style=C_DIM):
+        questions = await generate_questions(query, memory_ctx, cfg=cfg)
 
     if not questions:
         return ""
 
     qa_pairs: list[str] = []
-    total = len(questions)
-
     for i, q_text in enumerate(questions, 1):
-        _rule(f"Question {i} of {total}")
+        _rule(f"Question {i} of {len(questions)}")
         _blank()
-        _print(f"[{C_LABEL}]{q_text}[/]")
-        _blank()
-
+        _p(f"[{C_LABEL}]{q_text}[/]")
         try:
-            answer = _ask(">")
+            ans = _ask(">")
         except (KeyboardInterrupt, EOFError):
-            answer = ""
-
-        if answer:
-            qa_pairs.append(f"Q: {q_text}\nA: {answer}")
+            ans = ""
+        if ans:
+            qa_pairs.append(f"Q: {q_text}\nA: {ans}")
         else:
             _dim("(skipped)")
 
     _blank()
     _rule()
     _blank()
-    _dim("Understood. The research team has been briefed.")
-    _dim("Dispatching all six agents now.")
+    _dim("Understood. Dispatching the research team now.")
     _blank()
 
     if not qa_pairs:
         return ""
-
-    return (
-        "=== USER CLARIFICATIONS ===\n"
-        + "\n\n".join(qa_pairs)
-        + "\n=== END CLARIFICATIONS ==="
-    )
+    return "=== USER CLARIFICATIONS ===\n" + "\n\n".join(qa_pairs) + "\n=== END CLARIFICATIONS ==="
 
 
-# ── Pipeline status display ───────────────────────────────────────────────────
+# ── Pipeline status live display ──────────────────────────────────────────────
 
-_PIPELINE = [
-    ("Planner",                "Decomposing the query into research sub-tasks"),
-    ("Researcher",             "Fetching data, reports, and source material"),
-    ("Industry News Scanner",  "Scanning real-time signals and press"),
-    ("Competitive Intel",      "Mapping the competitive landscape"),
-    ("Analyst",                "Synthesising findings and assessing risk"),
-    ("Writer",                 "Composing the structured report"),
+_STAGE_STATUS: dict[str, str] = {}
+_STAGE_LOCK = asyncio.Lock()
+
+_ALL_STAGES_DEF = [
+    ("planner",    "Decomposing the query into a research framework"),
+    ("researcher", "Conducting deep research across sources"),
+    ("analyst",    "Synthesising findings and assessing risk"),
+    ("writer",     "Composing the structured report"),
+    # Foundry extras (shown only when Foundry pipeline is active)
+    ("industry_news", "Scanning real-time industry signals"),
+    ("competitive",   "Mapping the competitive landscape"),
 ]
 
+def _render_pipeline_panel(active_stages: list[tuple[str, str]]) -> str:
+    lines = []
+    for sid, sdesc in active_stages:
+        st = _STAGE_STATUS.get(sid, "waiting")
+        if st == "running":
+            icon = f"[{C_ACCENT}]>[/]"
+            col  = C_LABEL
+        elif st == "done":
+            icon = f"[{C_OK}].[/]"
+            col  = C_DIM
+        elif st == "failed":
+            icon = f"[{C_WARN}]![/]"
+            col  = C_WARN
+        else:
+            icon = f"[{C_DIM}]-[/]"
+            col  = C_DIM
+        lines.append(f"  {icon}  [{col}]{sdesc}[/]")
+    return "\n".join(lines)
 
-def _show_pipeline() -> None:
-    t = Table(box=None, show_header=False, padding=(0, 1), expand=False)
-    t.add_column(justify="right", style=C_DIM,   no_wrap=True, width=4)
-    t.add_column(style=C_LABEL,  no_wrap=True,   width=24)
-    t.add_column(style=C_DIM)
 
-    for i, (name, desc) in enumerate(_PIPELINE, 1):
-        t.add_row(str(i), name, desc)
+# ── Execute a research query ──────────────────────────────────────────────────
 
-    console.print(Panel(
-        t,
-        title=f"[{C_DIM}]Pipeline[/]",
-        border_style=C_BORDER,
-        padding=(0, 2),
-    ))
+async def execute_query(
+    query:       str,
+    memory:      MemoryStore,
+    cfg:         Config,
+    skip_hitl:   bool = False,
+    use_foundry: bool = False,
+) -> None:
 
+    memory_ctx = memory.build_context_string() if not memory.is_first_run() else ""
+    clarifications = ""
 
-# ── Report renderer ───────────────────────────────────────────────────────────
+    if not skip_hitl:
+        try:
+            clarifications = await _run_hitl(query, memory, cfg)
+        except (KeyboardInterrupt, EOFError):
+            _blank()
+            _dim("Clarifications skipped.")
+    else:
+        _blank()
 
-def _render_report(report, elapsed: float, path: str) -> None:
+    # ── Choose pipeline ───────────────────────────────────────────────────────
+    if use_foundry or cfg.provider == "foundry":
+        result = await _run_foundry_pipeline(query, memory_ctx, clarifications)
+    else:
+        result = await _run_standard_pipeline(query, memory_ctx, clarifications, cfg)
+
+    # ── Render ────────────────────────────────────────────────────────────────
+    report_text = result.get("report_text", "")
+    elapsed     = result.get("elapsed", 0)
+    report_id   = result.get("report_id", "unknown")
+    stages_ok   = result.get("stages_ok", [])
+
+    if not report_text:
+        _err("The research pipeline did not return a report.")
+        _warn("Check your API key and network connection.")
+        return
+
     _blank()
     _rule("Report")
     _blank()
-
-    # Stats row
-    profile  = report.metadata
-    conf     = profile.confidence_score
-    conf_col = C_OK if conf >= 0.8 else (C_WARN if conf >= 0.6 else C_ERR)
-    _print(
+    _p(
         f"[{C_DIM}]Generated in[/] [{C_LABEL}]{elapsed:.1f}s[/]   "
-        f"[{C_DIM}]Confidence[/] [{conf_col}]{conf:.0%}[/]   "
-        f"[{C_DIM}]Path[/] [{C_LABEL}]{path.replace('_',' ').replace('foundry ','').title()}[/]   "
-        f"[{C_DIM}]ID[/] [{C_DIM}]{profile.report_id}[/]"
+        f"[{C_DIM}]Stages completed[/] [{C_LABEL}]{len(stages_ok)}[/]   "
+        f"[{C_DIM}]ID[/] [{C_DIM}]{report_id}[/]"
     )
     _blank()
 
-    # Executive summary
-    if report.executive_summary:
-        console.print(Panel(
-            Markdown(report.executive_summary),
-            title=f"[{C_LABEL}]Executive Summary[/]",
-            border_style=C_BORDER,
-            padding=(0, 2),
-        ))
-        _blank()
+    console.print(Panel(
+        Markdown(report_text),
+        border_style=C_BORDER,
+        padding=(0, 2),
+    ))
+    _blank()
 
-    # Sections
-    for sec in report.sections:
-        if sec.content and sec.title:
-            console.print(Panel(
-                Markdown(sec.content),
-                title=f"[{C_LABEL}]{sec.title}[/]",
-                border_style=C_BORDER,
-                padding=(0, 2),
-            ))
-            _blank()
+    # Save file
+    fname = _save_report_file(query, report_text, report_id)
+    _dim(f"Report saved: {fname.name}")
 
-    # Conclusions
-    if report.conclusions:
-        md = "\n".join(f"- {c}" for c in report.conclusions)
-        console.print(Panel(
-            Markdown(md),
-            title=f"[{C_LABEL}]Conclusions[/]",
-            border_style=C_BORDER,
-            padding=(0, 2),
-        ))
-        _blank()
+    # Save to memory
+    query_id = await _save_to_memory(query, report_text, memory, result)
 
-    # Recommendations
-    if report.recommendations:
-        md = "\n".join(f"{i}. {r}" for i, r in enumerate(report.recommendations, 1))
-        console.print(Panel(
-            Markdown(md),
-            title=f"[{C_LABEL}]Strategic Recommendations[/]",
-            border_style=C_BORDER,
-            padding=(0, 2),
-        ))
-        _blank()
-
-    # Resources
-    if report.citations:
-        lines = []
-        for c in report.citations[:12]:
-            title = c.get("title", "Source")
-            url   = c.get("url", "")
-            line  = f"- {title}" + (f"  {url}" if url else "")
-            lines.append(line)
-        console.print(Panel(
-            Markdown("\n".join(lines)),
-            title=f"[{C_LABEL}]Resources & References[/]",
-            border_style=C_BORDER,
-            padding=(0, 2),
-        ))
-        _blank()
+    # Offer bookmark
+    await _offer_bookmark(query_id, memory)
 
 
-# ── Save report to file ───────────────────────────────────────────────────────
+# ── Standard pipeline runner ──────────────────────────────────────────────────
 
-def _save_report(report, query: str) -> Path:
-    slug  = query[:40].lower().replace(" ", "_").replace("/", "").replace("\\", "")
-    fname = Path.cwd() / f"report_{slug}_{report.metadata.report_id}.md"
-
-    lines = [
-        f"# {report.metadata.title or query}",
-        f"\n**ID:** `{report.metadata.report_id}`  "
-        f"| **Confidence:** {report.metadata.confidence_score:.0%}  "
-        f"| **Generated:** {report.metadata.generated_at}\n",
-        "---\n",
-        "## Executive Summary\n",
-        report.executive_summary, "\n",
-    ]
-    for sec in report.sections:
-        lines += [f"\n## {sec.title}\n", sec.content, "\n"]
-    if report.conclusions:
-        lines += ["\n## Conclusions\n"] + [f"- {c}\n" for c in report.conclusions]
-    if report.recommendations:
-        lines += ["\n## Recommendations\n"] + [
-            f"{i}. {r}\n" for i, r in enumerate(report.recommendations, 1)
-        ]
-    if report.citations:
-        lines += ["\n## Resources\n"] + [
-            f"- [{c.get('title','Source')}]({c.get('url','#')})\n"
-            for c in report.citations[:12]
-        ]
-
-    fname.write_text("\n".join(lines), encoding="utf-8")
-    return fname
-
-
-# ── Post-report memory save + bookmark ───────────────────────────────────────
-
-async def _save_to_memory(
+async def _run_standard_pipeline(
     query: str,
-    report,
-    memory: MemoryStore,
-    path_used: str,
-) -> int:
-    """Save the query and report summary to long-term memory."""
-    # Extract topics from section titles + report content
-    topics: list[str] = []
-    if report.sections:
-        topics = [s.title for s in report.sections[:5] if s.title]
+    memory_ctx: str,
+    clarifications: str,
+    cfg: Config,
+) -> dict:
+    pipeline = ResearchPipeline(cfg)
 
-    # Extract entity names from tracked entities in report text
-    full_text = report.executive_summary + " ".join(
-        s.content for s in report.sections
-    )
-    # Simple heuristic: save any all-caps words >3 chars as potential entities
-    import re
-    raw_entities = re.findall(r"\b[A-Z][a-zA-Z]{3,}\b(?:\s[A-Z][a-zA-Z]{2,})*", full_text)
-    entities = list(dict.fromkeys(raw_entities))[:10]  # deduplicated
+    stages_for_display = [("planner","Planning"), ("researcher","Researching"),
+                          ("analyst","Analysing"), ("writer","Writing")]
 
-    summary = report.executive_summary[:300] if report.executive_summary else query
+    status_lines = {sid: "waiting" for sid, _ in stages_for_display}
 
-    query_id = memory.save_query(
-        query    = query,
-        summary  = summary,
-        topics   = topics,
-        entities = entities,
-        path_used= path_used,
-    )
+    with console.status(f"  [{C_DIM}]Research in progress...[/]", spinner="line", spinner_style=C_DIM) as sp:
+        async def progress_cb(stage_id: str, status: str) -> None:
+            status_lines[stage_id] = status
+            labels = {"planner":"Planning","researcher":"Researching",
+                      "analyst":"Analysing","writer":"Writing"}
+            running = next((labels[s] for s, st in status_lines.items() if st == "running"), "Running")
+            sp.update(f"  [{C_DIM}]{running}...[/]")
 
-    for e in entities[:6]:
-        memory.track_entity(e)
+        result = await pipeline.execute(
+            query,
+            memory_context=memory_ctx,
+            user_clarifications=clarifications,
+            progress_cb=progress_cb,
+        )
 
-    return query_id
+    return result
 
 
-async def _offer_bookmark(query_id: int, report, memory: MemoryStore) -> None:
-    """Offer the user a chance to bookmark a key finding."""
-    _blank()
-    _rule("Memory")
-    _blank()
-    _print(f"[{C_LABEL}]Report saved to memory.[/]")
-    _dim(
-        "You can bookmark a key finding for your long-term record.\n"
-        "  Type it now, or press Enter to continue."
-    )
+# ── Foundry pipeline runner ───────────────────────────────────────────────────
 
+async def _run_foundry_pipeline(
+    query: str,
+    memory_ctx: str,
+    clarifications: str,
+) -> dict:
     try:
-        insight = _ask("Bookmark  >")
-    except (KeyboardInterrupt, EOFError):
-        insight = ""
+        from src.orchestration.research_workflow import ResearchWorkflow
+    except ImportError:
+        _err("Azure AI Foundry pipeline is not available in this installation.")
+        _warn("Run 'logos setup' and select a different provider.")
+        return {}
 
-    if insight:
-        memory.save_insight(query_id, insight)
-        _ok("Saved to long-term memory.")
-    else:
-        _dim("Nothing bookmarked.")
-
-    _blank()
-
-
-# ── Main query execution ──────────────────────────────────────────────────────
-
-async def execute_query(
-    query: str,
-    memory: MemoryStore,
-    enable_a2a: bool = True,
-    skip_hitl: bool = False,
-) -> None:
-    from src.utils.config import load_environment
-    load_environment()
-
-    from src.orchestration.research_workflow import ResearchWorkflow
-
-    # Memory context for agents
-    memory_ctx = memory.build_context_string() if not memory.is_first_run() else ""
-
-    # Human-in-the-loop
-    clarifications = ""
-    if not skip_hitl:
-        try:
-            clarifications = await _run_hitl(query, memory)
-        except (KeyboardInterrupt, EOFError):
-            _blank()
-            _dim("Clarification skipped. Proceeding with the original query.")
-            _blank()
-    else:
-        _blank()
-
-    # Show pipeline
-    _show_pipeline()
-    _blank()
-
-    # Run
-    workflow = ResearchWorkflow(enable_a2a=enable_a2a, max_retries=1)
+    workflow = ResearchWorkflow(enable_a2a=True, max_retries=1)
     t0 = time.time()
 
-    research_phrases = [
-        "This could take a few minutes... Reading your prompt & loading context",
-        "This could take a few minutes... Understanding the agent's purpose",
-        "This could take a few minutes... Identifying & evaluating research dimensions",
-        "This could take a few minutes... Breaking down what matters most",
-        "This could take a few minutes... Cooking up research vectors & strategies",
-        "This could take a few minutes... Scanning sources & searching the web",
-        "This could take a few minutes... Checking for blind spots & verifying facts",
-        "This could take a few minutes... Synthesizing findings & drafting the report",
-        "This could take a few minutes... Adding a pinch of quality & polishing response"
-    ]
-
-    async with DynamicStatus(
-        console,
-        f"  [{C_DIM}]Research in progress...[/]",
-        research_phrases,
-        spinner="line",
-        spinner_style=C_DIM,
-    ):
-        result = await workflow.execute(
+    with console.status(f"  [{C_DIM}]Foundry 6-agent pipeline running...[/]", spinner="line", spinner_style=C_DIM):
+        raw = await workflow.execute(
             query,
             memory_context=memory_ctx,
             user_clarifications=clarifications,
         )
 
     elapsed = time.time() - t0
-    report  = result.get("report")
-    path    = result.get("path_used", "unknown")
+    report  = raw.get("report")
+    if not report:
+        return {}
 
-    if report and report.executive_summary:
-        _ok(f"Complete.  {elapsed:.1f}s elapsed.")
-        _render_report(report, elapsed, path)
+    # Flatten Foundry report object to standard dict
+    report_text = _flatten_foundry_report(report)
+    return {
+        "report_text":   report_text,
+        "stages_ok":     raw.get("stages_ok", []),
+        "stages_failed": raw.get("stages_failed", []),
+        "report_id":     getattr(report.metadata, "report_id", "foundry"),
+        "elapsed":       elapsed,
+    }
 
-        # Save report file
-        fname = _save_report(report, query)
-        _dim(f"Report file: {fname.name}")
 
-        # Save to memory
-        query_id = await _save_to_memory(query, report, memory, path)
+def _flatten_foundry_report(report) -> str:
+    """Convert a GeneratedReport object to a markdown string."""
+    parts: list[str] = []
+    title = getattr(report.metadata, "title", "Research Report")
+    parts.append(f"# {title}\n")
+    if report.executive_summary:
+        parts.append(f"## Executive Summary\n\n{report.executive_summary}\n")
+    for sec in report.sections:
+        if sec.title and sec.content:
+            parts.append(f"## {sec.title}\n\n{sec.content}\n")
+    if report.conclusions:
+        parts.append("## Conclusions\n\n" + "\n".join(f"- {c}" for c in report.conclusions))
+    if report.recommendations:
+        parts.append("## Recommendations\n\n" + "\n".join(
+            f"{i}. {r}" for i, r in enumerate(report.recommendations, 1)
+        ))
+    if report.citations:
+        parts.append("## Resources\n\n" + "\n".join(
+            f"- [{c.get('title','Source')}]({c.get('url','#')})"
+            for c in report.citations[:12]
+        ))
+    return "\n".join(parts)
 
-        # Offer bookmark
-        await _offer_bookmark(query_id, report, memory)
+
+# ── Memory helpers ────────────────────────────────────────────────────────────
+
+async def _save_to_memory(
+    query: str,
+    report_text: str,
+    memory: MemoryStore,
+    result: dict,
+) -> int:
+    import re
+    entities = list(dict.fromkeys(
+        re.findall(r"\b[A-Z][a-zA-Z]{3,}(?:\s[A-Z][a-zA-Z]{2,})*\b", report_text)
+    ))[:10]
+
+    qid = memory.save_query(
+        query    = query,
+        summary  = report_text[:300],
+        topics   = result.get("stages_ok", []),
+        entities = entities,
+    )
+    for e in entities[:6]:
+        memory.track_entity(e)
+    return qid
+
+
+async def _offer_bookmark(query_id: int, memory: MemoryStore) -> None:
+    _blank()
+    _rule("Memory")
+    _blank()
+    _p(f"[{C_LABEL}]Report saved to memory.[/]")
+    _dim("Bookmark a key finding for your long-term record, or press Enter to skip.")
+    try:
+        insight = _ask("Bookmark  >")
+    except (KeyboardInterrupt, EOFError):
+        insight = ""
+    if insight:
+        memory.save_insight(query_id, insight)
+        _ok("Saved.")
     else:
-        _err("The research pipeline did not produce a report.")
-        _warn("Check your Azure credentials and network connection.")
+        _dim("Nothing bookmarked.")
+    _blank()
+
+
+def _save_report_file(query: str, report_text: str, report_id: str) -> Path:
+    slug  = query[:40].lower().replace(" ", "_").replace("/", "").replace("\\", "")
+    fname = Path.cwd() / f"report_{slug}_{report_id}.md"
+    fname.write_text(report_text, encoding="utf-8")
+    return fname
+
+
+# ── Memory display commands ───────────────────────────────────────────────────
+
+def cmd_memory(memory: MemoryStore) -> None:
+    _blank()
+    _rule("Memory")
+    _blank()
+    profile  = memory.get_user_profile()
+    recent   = memory.get_recent_queries(5)
+    entities = memory.get_tracked_entities(8)
+
+    if profile:
+        for k, v in profile.items():
+            _p(f"[{C_DIM}]{k:<22}[/] {v}")
+        _blank()
+    if recent:
+        _p(f"[{C_LABEL}]Recent investigations:[/]")
+        for q in recent:
+            ts = q["created_at"][:10]
+            _dim(f"  {ts}  {q['query'][:70]}")
+        _blank()
+    if entities:
+        _p(f"[{C_LABEL}]Frequently researched:[/]")
+        for e in entities:
+            _dim(f"  {e['name']:<30} mentioned {e['count']}x")
+        _blank()
+    if not profile and not recent:
+        _dim("No memory stored yet.")
+    _blank()
+
+
+def cmd_insights(memory: MemoryStore) -> None:
+    _blank()
+    _rule("Bookmarked Insights")
+    _blank()
+    insights = memory.get_recent_insights(10)
+    if insights:
+        for i, ins in enumerate(insights, 1):
+            _p(f"[{C_DIM}]{i}.[/]  {ins}")
+            _blank()
+    else:
+        _dim("No insights bookmarked yet.")
+    _blank()
+
+
+# ── Model connection test ─────────────────────────────────────────────────────
+
+async def cmd_model_test(cfg: Config) -> None:
+    _banner()
+    _rule("Connection Test")
+    _blank()
+    _dim(f"Provider : {cfg.provider_label}")
+    _dim(f"Model    : {cfg.model}")
+    _blank()
+
+    with console.status(f"  [{C_DIM}]Pinging model...[/]", spinner="line", spinner_style=C_DIM):
+        try:
+            client = cfg.build_openai_client()
+            r = client.chat.completions.create(
+                model=cfg.model,
+                messages=[{"role": "user", "content": "In one sentence, describe the state of AI in 2025."}],
+                max_tokens=80,
+            )
+            text = r.choices[0].message.content or "(no content)"
+            _ok("Model responded.")
+            _blank()
+            console.print(Panel(text, border_style=C_BORDER, padding=(0, 2)))
+        except Exception as exc:
+            _err(f"Connection failed: {exc}")
+    _blank()
+
+
+# ── Help ──────────────────────────────────────────────────────────────────────
+
+def _print_help() -> None:
+    _blank()
+    _p(f"[{C_LABEL}]Commands:[/]")
+    _dim("  Any text          Run a full research investigation")
+    _dim("  setup             Reconfigure your AI provider")
+    _dim("  memory            View your research history and profile")
+    _dim("  insights          View bookmarked findings")
+    _dim("  profile           Update your personal profile")
+    _dim("  clear memory      Wipe all stored memory")
+    _dim("  exit / quit       End the session")
+    _blank()
 
 
 # ── Interactive REPL ──────────────────────────────────────────────────────────
 
 async def interactive_mode(
-    memory: MemoryStore,
-    enable_a2a: bool = True,
+    cfg:           Config,
+    memory:        MemoryStore,
+    skip_hitl:     bool = False,
+    use_foundry:   bool = False,
 ) -> None:
     _banner()
 
-    # First run setup
     if memory.is_first_run():
-        await _first_time_setup(memory)
+        await _user_profile_setup(memory)
     else:
-        _greet(memory)
+        _greet(memory, cfg)
 
-    _print(f"[{C_DIM}]State your investigation. Type 'help' for commands, 'exit' to leave.[/]")
+    _p(f"[{C_DIM}]State your investigation.  Type 'help' for commands,  'exit' to leave.[/]")
     _blank()
 
     while True:
@@ -630,39 +679,24 @@ async def interactive_mode(
         if not query:
             continue
 
-        low = query.lower()
+        low = query.lower().strip()
 
         if low in ("exit", "quit", "q"):
             _blank()
             _dim("Session closed.")
             _blank()
             break
-
-        if low == "help":
-            _blank()
-            _print(f"[{C_DIM}]Commands:[/]")
-            _dim("  Any text          Run a full research investigation")
-            _dim("  memory            Show what LOGOS remembers about you")
-            _dim("  profile           Update your profile")
-            _dim("  insights          View your bookmarked findings")
-            _dim("  clear memory      Wipe your memory database")
-            _dim("  exit / quit       End the session")
-            _blank()
-            continue
-
-        if low == "memory":
-            _show_memory(memory)
-            continue
-
-        if low == "profile":
-            await _first_time_setup(memory)
-            continue
-
-        if low == "insights":
-            _show_insights(memory)
-            continue
-
-        if low == "clear memory":
+        elif low == "help":
+            _print_help()
+        elif low == "memory":
+            cmd_memory(memory)
+        elif low == "insights":
+            cmd_insights(memory)
+        elif low == "profile":
+            await _user_profile_setup(memory)
+        elif low == "setup":
+            await run_setup(cfg, force=True)
+        elif low == "clear memory":
             _blank()
             confirm = _ask("Type 'confirm' to erase all memory  >")
             if confirm.lower() == "confirm":
@@ -672,158 +706,109 @@ async def interactive_mode(
             else:
                 _dim("Cancelled.")
             _blank()
-            continue
-
-        try:
-            await execute_query(query, memory, enable_a2a=enable_a2a)
-        except KeyboardInterrupt:
-            _blank()
-            _warn("Investigation interrupted.")
-            _blank()
-        except Exception as exc:
-            _err(f"Pipeline error: {exc}")
-            _blank()
+        else:
+            try:
+                await execute_query(
+                    query, memory, cfg,
+                    skip_hitl=skip_hitl,
+                    use_foundry=use_foundry,
+                )
+            except KeyboardInterrupt:
+                _blank()
+                _warn("Investigation interrupted.")
+                _blank()
+            except Exception as exc:
+                _err(f"Pipeline error: {exc}")
+                _blank()
 
     memory.close()
 
 
-# ── Memory display commands ───────────────────────────────────────────────────
-
-def _show_memory(memory: MemoryStore) -> None:
-    _blank()
-    _rule("Memory")
-    _blank()
-
-    profile  = memory.get_user_profile()
-    recent   = memory.get_recent_queries(5)
-    entities = memory.get_tracked_entities(8)
-
-    if profile:
-        for k, v in profile.items():
-            _print(f"[{C_DIM}]{k:<22}[/] {v}")
-        _blank()
-
-    if recent:
-        _print(f"[{C_LABEL}]Recent investigations:[/]")
-        for q in recent:
-            ts = q["created_at"][:10]
-            _dim(f"  {ts}  {q['query'][:70]}")
-        _blank()
-
-    if entities:
-        _print(f"[{C_LABEL}]Frequently researched:[/]")
-        for e in entities:
-            _dim(f"  {e['name']:<30} mentioned {e['count']}x")
-        _blank()
-
-    if not profile and not recent:
-        _dim("No memory stored yet.")
-        _blank()
-
-
-def _show_insights(memory: MemoryStore) -> None:
-    _blank()
-    _rule("Bookmarked Insights")
-    _blank()
-    insights = memory.get_recent_insights(10)
-    if insights:
-        for i, ins in enumerate(insights, 1):
-            _print(f"[{C_DIM}]{i}.[/]  {ins}")
-            _blank()
-    else:
-        _dim("No insights bookmarked yet.")
-        _dim("After a report is generated, you will be offered the chance to bookmark findings.")
-    _blank()
-
-
-# ── Model test ────────────────────────────────────────────────────────────────
-
-async def run_model_test() -> None:
-    _banner()
-    _rule("Connection Test")
-    _blank()
-
-    endpoint   = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
-    api_key    = os.environ.get("AZURE_OPENAI_API_KEY", "")
-
-    _dim(f"Endpoint   : {endpoint[:60]}")
-    _dim(f"Deployment : {deployment}")
-    _blank()
-
-    from openai import AzureOpenAI
-    client = AzureOpenAI(base_url=endpoint.rstrip("/"), api_key=api_key)
-
-    test_phrases = [
-        "Pinging model... Establishing connection",
-        "Pinging model... Awaiting response",
-        "Pinging model... Evaluating connection quality"
-    ]
-
-    async with DynamicStatus(
-        console,
-        f"  [{C_DIM}]Pinging model...[/]",
-        test_phrases,
-        spinner="line",
-        spinner_style=C_DIM,
-    ):
-        try:
-            r = client.chat.completions.create(
-                model=deployment,
-                messages=[{"role": "user", "content": "Reply in one sentence about AI in 2025."}],
-                max_tokens=100,
-            )
-            text = r.choices[0].message.content or "(no content)"
-            _ok("Model responded.")
-            _blank()
-            console.print(Panel(text, title="Reply", border_style=C_BORDER, padding=(0, 2)))
-        except Exception as exc:
-            _err(f"Connection failed: {exc}")
-
-    _blank()
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Argument parsing ──────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="logos",
         description="LOGOS — Autonomous Research Intelligence Agent",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  logos                              interactive session\n"
+            "  logos -q 'NLP trends 2025'         single query\n"
+            "  logos setup                        configure provider\n"
+            "  logos --no-hitl -q 'your query'   skip clarifying questions\n"
+            "  logos --model-test                 test API connection\n"
+        ),
     )
-    p.add_argument("-q", "--query",     help="Run a single research query non-interactively")
-    p.add_argument("--no-a2a",          action="store_true", help="Skip Foundry agents, use local model only")
-    p.add_argument("--no-hitl",         action="store_true", help="Skip clarifying questions")
-    p.add_argument("--model-test",      action="store_true", help="Test model connection and exit")
-    p.add_argument("--memory-path",     default=None,        help="Custom path for memory database")
+    p.add_argument("command",        nargs="?",       help="Command: setup, memory, insights")
+    p.add_argument("-q", "--query",  default=None,    help="Run a single query non-interactively")
+    p.add_argument("--no-hitl",      action="store_true", help="Skip clarifying questions")
+    p.add_argument("--foundry",      action="store_true", help="Use Azure AI Foundry 6-agent pipeline")
+    p.add_argument("--model-test",   action="store_true", help="Test model connection and exit")
+    p.add_argument("--memory-path",  default=None,    help="Custom path for memory database")
     return p.parse_args()
 
 
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 async def async_main() -> None:
-    args = parse_args()
-
-    if args.model_test:
-        await run_model_test()
-        return
-
+    args   = parse_args()
+    cfg    = Config()
     memory = MemoryStore(db_path=args.memory_path)
     memory.initialize()
 
+    # ── Subcommands ───────────────────────────────────────────────────────────
+    if args.command == "setup":
+        _banner()
+        await run_setup(cfg, force=True)
+        return
+
+    if args.command == "memory":
+        _banner()
+        cmd_memory(memory)
+        return
+
+    if args.command == "insights":
+        _banner()
+        cmd_insights(memory)
+        return
+
+    if args.model_test:
+        await cmd_model_test(cfg)
+        return
+
+    # ── First-run: must configure a provider ─────────────────────────────────
+    if not cfg.is_configured():
+        _banner()
+        _p(f"[{C_LABEL}]LOGOS is not configured yet.[/]")
+        _blank()
+        await run_setup(cfg)
+        if not cfg.is_configured():
+            _err("Setup incomplete. Run 'logos setup' to configure.")
+            return
+
+    # ── Single-query mode ─────────────────────────────────────────────────────
     if args.query:
         _banner()
         if memory.is_first_run():
-            _dim("First session detected. Run 'logos' interactively to set up your profile.")
+            _dim("First session. Run 'logos' interactively to set up your profile.")
             _blank()
         else:
-            _greet(memory)
+            _greet(memory, cfg)
         await execute_query(
-            args.query,
-            memory,
-            enable_a2a=not args.no_a2a,
+            args.query, memory, cfg,
             skip_hitl=args.no_hitl,
+            use_foundry=args.foundry,
         )
         memory.close()
-    else:
-        await interactive_mode(memory, enable_a2a=not args.no_a2a)
+        return
+
+    # ── Interactive mode ──────────────────────────────────────────────────────
+    await interactive_mode(
+        cfg, memory,
+        skip_hitl=args.no_hitl,
+        use_foundry=args.foundry,
+    )
 
 
 def main() -> None:
