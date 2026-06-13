@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 # Metadata
 LABEL maintainer="Reasoning-Agent-Hackathon"
-LABEL description="Phi-4 Reasoning Multi-Agent System — Microsoft Agent League Hackathon"
+LABEL description="OpenAI Reasoning Multi-Agent System — Microsoft Agent League Hackathon"
 
 WORKDIR /app
 

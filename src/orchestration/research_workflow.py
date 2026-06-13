@@ -13,7 +13,7 @@ so their Bing web search / MCP toolbox calls execute correctly.
 Writer-agent (no tools) uses the Responses API — faster and proven reliable.
 
 FALLBACK: If any Foundry call fails, that stage is skipped and accumulated
-context is passed to the next stage. If writer also fails → local Phi-4.
+context is passed to the next stage. If writer also fails → local fallback model.
 """
 
 from __future__ import annotations
@@ -47,22 +47,22 @@ _EP = os.getenv(
 _AGENTS = {
     "planner": {
         "name":    os.getenv("PLANNER_AGENT_NAME",    "planner-agent"),
-        "version": os.getenv("PLANNER_AGENT_VERSION", "9"),
+        "version": os.getenv("PLANNER_AGENT_VERSION", "12"),
         "id":      os.getenv("PLANNER_ASST_ID") or os.getenv("PLANNER_AGENT_ID") or "",
     },
     "researcher": {
         "name":    os.getenv("RESEARCHER_AGENT_NAME",    "researcher-agent"),
-        "version": os.getenv("RESEARCHER_AGENT_VERSION", "7"),
+        "version": os.getenv("RESEARCHER_AGENT_VERSION", "12"),
         "id":      os.getenv("RESEARCHER_ASST_ID") or os.getenv("RESEARCHER_AGENT_ID") or "",
     },
     "industry_news": {
         "name":    os.getenv("INDUSTRY_NEWS_AGENT_NAME",    "industry-news-trend-scanner"),
-        "version": os.getenv("INDUSTRY_NEWS_AGENT_VERSION", "1"),
+        "version": os.getenv("INDUSTRY_NEWS_AGENT_VERSION", "5"),
         "id":      os.getenv("INDUSTRY_NEWS_ASST_ID") or os.getenv("INDUSTRY_NEWS_AGENT_ID") or "",
     },
     "competitive": {
         "name":    os.getenv("COMPETITIVE_AGENT_NAME",    "competitive-landscape-researcher"),
-        "version": os.getenv("COMPETITIVE_AGENT_VERSION", "1"),
+        "version": os.getenv("COMPETITIVE_AGENT_VERSION", "2"),
         "id":      os.getenv("COMPETITIVE_ASST_ID") or os.getenv("COMPETITIVE_AGENT_ID") or "",
     },
     "analyst": {
@@ -374,11 +374,11 @@ class ResearchWorkflow:
             else:
                 stages_failed.append("writer")
 
-        # ── Fallback: Local Phi-4 ──────────────────────────────────────────────
+        # ── Fallback: Local Model ──────────────────────────────────────────────
         logger.info("using_local_fallback", stages_ok=stages_ok)
         report  = await self._local_fallback(query, context, t0)
         elapsed = (datetime.utcnow() - t0).total_seconds()
-        return self._result(report, query, t0, "local_phi4", stages_ok, stages_failed)
+        return self._result(report, query, t0, "local_fallback", stages_ok, stages_failed)
 
     def _result(self, report, query, t0, path, ok_stages, fail_stages) -> dict:
         elapsed = (datetime.utcnow() - t0).total_seconds()

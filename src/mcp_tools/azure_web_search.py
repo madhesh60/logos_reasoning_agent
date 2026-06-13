@@ -24,7 +24,7 @@ load_dotenv(_project_root / ".env")
 ENDPOINT         = os.environ["AZURE_PROJECT_ENDPOINT"]        # .../projects/<name>
 TOOLBOX_NAME     = os.environ.get("AZURE_TOOLBOX_NAME", "reasoning-agent-web-search")
 TOOLBOX_VERSION  = os.environ.get("AZURE_TOOLBOX_VERSION", "1")
-MODEL_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "phi-4-mini-reasoning")
+MODEL_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
 API_KEY          = os.environ["AZURE_OPENAI_API_KEY"]
 
 # Derive the OpenAI-compatible endpoint from the project endpoint
@@ -226,7 +226,7 @@ async def call_agent_with_toolbox(query: str) -> str:
         raise RuntimeError("call create_agent_with_toolbox() first")
 
     print(f"\n[agent] Query: {query}")
-    print("[agent] Thinking (may take 10-30 s for phi-4-reasoning)...")
+    print("[agent] Thinking...")
 
     result = await _agent.ainvoke({"messages": [("user", query)]})
 

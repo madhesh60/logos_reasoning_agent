@@ -213,7 +213,7 @@ def get_chat_model(temperature: float = 0.3, max_tokens: int = 3000) -> Any:
     it uses ChatOpenAI configured with standard OpenAI completions.
     Otherwise, it defaults to AzureChatOpenAI.
 
-    max_tokens: caps total output tokens. Critical for Phi-4 reasoning models which
+    max_tokens: caps total output tokens. Critical for reasoning models which
     can consume thousands of tokens in <think> blocks before outputting JSON.
     """
     from langchain_openai import ChatOpenAI, AzureChatOpenAI
@@ -293,7 +293,7 @@ def clean_and_parse_json(text: str) -> Any:
     and extracting the JSON object or array content.
 
     Handles common model output issues:
-    - <think> reasoning traces (Phi-4 reasoning models)
+    - <think> reasoning traces (reasoning models)
     - Markdown code fences (```json ... ```)
     - Invalid backslash escape sequences  (\\ in unexpected places)
     - Truncated JSON (finish_reason=length)
@@ -303,7 +303,7 @@ def clean_and_parse_json(text: str) -> Any:
     import json
 
     # ── 1. Strip <think>...</think> blocks (handles closed and unclosed) ────────
-    # Phi-4 reasoning models output potentially very long <think> blocks.
+    # Reasoning models output potentially very long <think> blocks.
     # Case A: block is properly closed with </think>
     text_clean = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
     # Case B: block is never closed (model ran out of space thinking)

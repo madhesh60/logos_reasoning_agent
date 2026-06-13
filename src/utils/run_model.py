@@ -1,7 +1,7 @@
 """
 Azure AI Foundry — Quick Model Connection Test
 =============================================
-Tests both phi-4-mini-reasoning and phi-4-reasoning deployments
+Tests both gpt-4o-mini and gpt-4o deployments
 using the API key from .env (no Azure CLI login required).
 
 Run from project root:
@@ -23,7 +23,7 @@ from openai import OpenAI
 # ── Connection details pulled from .env ─────────────────────────────────────
 ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"]          # e.g. https://<res>.services.ai.azure.com/openai/v1
 API_KEY  = os.environ["AZURE_OPENAI_API_KEY"]
-DEPLOY   = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "phi-4-mini-reasoning")
+DEPLOY   = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
 
 # Normalise: strip /chat/completions if accidentally left in
 if ENDPOINT.endswith("/chat/completions"):

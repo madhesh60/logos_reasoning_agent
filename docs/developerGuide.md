@@ -10,7 +10,7 @@ Before beginning the installation, ensure your host environment meets the follow
 *   **Operating System**: Windows 10/11, macOS, or Linux.
 *   **Python**: Version 3.10 or higher.
 *   **Git**: Required for repository management.
-*   **Access Credentials**: An active Azure subscription with access to Azure AI Foundry model deployments (specifically `phi-4-mini-reasoning`, `gpt-4o-mini`, or `gpt-4o`).
+*   **Access Credentials**: An active Azure subscription with access to Azure AI Foundry model deployments (specifically `gpt-4o` or `gpt-4o-mini`).
 
 ---
 
@@ -65,7 +65,7 @@ AZURE_OPENAI_ENDPOINT=https://your-resource.services.ai.azure.com/openai/v1
 # API key to authenticate model calls
 AZURE_OPENAI_API_KEY=your-api-key-here
 # Deployment name of the target reasoning model
-AZURE_OPENAI_DEPLOYMENT=phi-4-mini-reasoning
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
 # API version mapping
 AZURE_OPENAI_API_VERSION=2024-02-01
 

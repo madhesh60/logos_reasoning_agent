@@ -744,7 +744,7 @@ async def run_model_test() -> None:
     _blank()
 
     endpoint   = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "phi-4-mini-reasoning")
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
     api_key    = os.environ.get("AZURE_OPENAI_API_KEY", "")
 
     _dim(f"Endpoint   : {endpoint[:60]}")

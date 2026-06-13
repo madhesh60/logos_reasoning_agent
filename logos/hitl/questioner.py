@@ -30,7 +30,7 @@ async def _foundry_questions(query: str, memory_context: str, max_q: int) -> lis
 
     endpoint   = os.getenv("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
     api_key    = os.getenv("AZURE_OPENAI_API_KEY", "")
-    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "phi-4-mini-reasoning")
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
 
     if not endpoint or not api_key:
         raise ValueError("Azure OpenAI credentials not configured")

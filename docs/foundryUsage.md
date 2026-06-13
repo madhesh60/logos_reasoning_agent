@@ -77,9 +77,9 @@ For specialized competitive analysis requests (`POST /competitive`), the system 
 
 ---
 
-## 3. Reasoning Model Optimization (Phi-4-mini-reasoning)
+## 3. Reasoning Model Optimization
 
-When calling reasoning models (e.g., `phi-4-mini-reasoning` or `o4-mini`), responses include intermediate reasoning traces enclosed within `<think>...</think>` tags. To prevent these traces from corrupting downstream JSON parsing, LOGOS implements a custom parsing utility (`clean_and_parse_json` in `src/utils/config.py`):
+When calling reasoning models, responses include intermediate reasoning traces enclosed within `<think>...</think>` tags. To prevent these traces from corrupting downstream JSON parsing, LOGOS implements a custom parsing utility (`clean_and_parse_json` in `src/utils/config.py`):
 
 1.  **Tag Extraction**: Scans response text using regular expressions to remove `<think>...</think>` blocks (handling both complete and unclosed blocks).
 2.  **Markdown Cleaning**: Identifies and removes enclosing Markdown code blocks (e.g., ` ```json ... ``` `).

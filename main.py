@@ -49,7 +49,7 @@ app = FastAPI(
     description="""
 Microsoft Agent League Hackathon — Research-to-Report Multi-Agent System.
 
-Uses Phi-4-mini-reasoning on Azure AI Foundry with:
+Uses OpenAI models on Azure AI Foundry with:
 - **LangGraph** orchestration (Planner → Researcher → Analyst → Writer)
 - **A2A Protocol** for inter-agent communication
 - **MCP Toolbox** for Bing web search
@@ -103,7 +103,7 @@ async def health():
     """Liveness probe — returns 200 if the API is running."""
     return {
         "status": "healthy",
-        "model": os.environ.get("AZURE_OPENAI_DEPLOYMENT", "phi-4-mini-reasoning"),
+        "model": os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o"),
         "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT", "")[:60] + "...",
         "timestamp": datetime.utcnow().isoformat(),
     }

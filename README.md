@@ -22,16 +22,16 @@ LOGOS implements a sequential, context-accumulating multi-agent pipeline compose
                                      │
            ┌─────────────────────────┼─────────────────────────┐
            ▼                         ▼                         ▼
-     Planner Agent           Researcher Agent        Industry News Scanner
-   (gpt-4o-mini/phi-4)        (o4-mini/phi-4)         (gpt-4o-mini/phi-4)
+      Planner Agent           Researcher Agent        Industry News Scanner
+      (GPT o4 Mini)            (GPT o4 Mini)            (GPT-4.1 Mini)
            │                         │                         │
            └─────────────────────────┼─────────────────────────┘
                                      │
                                      ▼
            ┌─────────────────────────┼─────────────────────────┐
            ▼                         ▼                         ▼
-   Competitive Intel           Analyst Agent             Writer Agent
-  (gpt-4o-mini/phi-4)       (gpt-4o-mini/phi-4)         (gpt-4o/phi-4)
+    Competitive Intel           Analyst Agent             Writer Agent
+     (GPT-4.1 Mini)            (GPT-4.1 Mini)             (GPT-4.1)
            │                         │                         │
            └─────────────────────────┼─────────────────────────┘
                                      │
@@ -115,6 +115,25 @@ logos --no-a2a -q "Summarize advancements in solid-state batteries."
 # Run a diagnostics check on model endpoints
 logos --model-test
 ```
+
+### Checking Agent Memory & Personalization
+
+To view or print the agent's persisted memory database:
+1. Launch the interactive shell:
+   ```bash
+   logos
+   ```
+   *(Or if running directly via python: `python logos/cli.py`)*
+2. Once the greeting banner displays, type **`memory`** at the prompt:
+   ```text
+   > memory
+   ```
+   This prints a clean, beautifully formatted panel containing Personalization Details, Recent investigations history, and Frequently researched entities.
+3. You can also view your bookmarked findings by typing:
+   ```text
+   > insights
+   ```
+
 
 ### FastAPI Web Server Execution
 

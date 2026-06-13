@@ -8,34 +8,34 @@ This document outlines the multi-agent system architecture and design principles
 
 LOGOS divides strategic research and competitive intelligence into six distinct analytical tasks. Each task is handled by a specialized agent character configured with appropriate model quotas and targeted instructions.
 
-### 1.1. Planner Agent (`planner-agent` | Version 9)
+### 1.1. Planner Agent (`planner-agent` | Version 12)
 *   **Persona**: Senior Research Coordinator / Methodical Planner.
 *   **Role**: Decomposes the high-level business query into discrete, sequential sub-tasks. It estimates execution times and defines required tools.
-*   **Model Recommendation**: `gpt-4o-mini` (or local reasoning models like `phi-4-mini-reasoning`).
+*   **Model Recommendation**: `GPT o4 Mini`.
 *   **Inputs**: User's raw research query and personalized user profile context.
 *   **Process**: Evaluates the scope of the request, identifies critical topics of investigation, estimates execution durations, and specifies tools.
 *   **Outputs**: A structured research plan containing a task execution path.
 
-### 1.2. Researcher Agent (`researcher-agent` | Version 7)
+### 1.2. Researcher Agent (`researcher-agent` | Version 12)
 *   **Persona**: Data Gathering Specialist / Web Fact Finder.
 *   **Role**: Gathers grounded factual intelligence from the web.
-*   **Model Recommendation**: `o4-mini` (or local reasoning models like `phi-4-mini-reasoning`).
+*   **Model Recommendation**: `GPT o4 Mini`.
 *   **Inputs**: Original query, user context, and the planner's structured research plan.
 *   **Process**: Performs search operations using Model Context Protocol (MCP) search toolboxes to query live search indexes. It parses result summaries and extracts direct source URLs.
 *   **Outputs**: Grounded web research findings containing citations and verified links.
 
-### 1.3. Industry News Scanner (`industry-news-trend-scanner` | Version 1)
+### 1.3. Industry News Scanner (`industry-news-trend-scanner` | Version 5)
 *   **Persona**: Real-Time Trend Analyst / News Reporter.
 *   **Role**: Focuses on breaking developments, press releases, and near-term market trends.
-*   **Model Recommendation**: `gpt-4o-mini` (or local reasoning models like `phi-4-mini-reasoning`).
+*   **Model Recommendation**: `GPT-4.1 Mini`.
 *   **Inputs**: Original query, user context, and accumulated web research findings.
 *   **Process**: Targets news engines and recent industry releases focusing on the last 3-6 months to capture market shifts.
 *   **Outputs**: A chronological log of recent news headlines, trend signals, and press summaries with specific publication sources.
 
-### 1.4. Competitive Landscape Researcher (`competitive-landscape-researcher` | Version 1)
+### 1.4. Competitive Landscape Researcher (`competitive-landscape-researcher` | Version 2)
 *   **Persona**: Competitive Intelligence Officer / SWOT Specialist.
 *   **Role**: Maps industry competitors, assesses market share, and identifies strategic white-spaces.
-*   **Model Recommendation**: `gpt-4o-mini` (or local reasoning models like `phi-4-mini-reasoning`).
+*   **Model Recommendation**: `GPT-4.1 Mini`.
 *   **Inputs**: Original query, user context, accumulated research findings, and trend signals.
 *   **Process**: Identifies major competitors, their market share, core technologies, and product positioning.
 *   **Outputs**: Competitor profiles, SWOT findings, and strategic positioning summaries.
@@ -43,7 +43,7 @@ LOGOS divides strategic research and competitive intelligence into six distinct 
 ### 1.5. Analyst Agent (`analyst-agent` | Version 4)
 *   **Persona**: Risk Officer / Qualitative Synthesis Expert.
 *   **Role**: Synthesizes facts, detects underlying patterns, and constructs risk assessments.
-*   **Model Recommendation**: `gpt-4o-mini` (or local reasoning models like `phi-4-mini-reasoning`).
+*   **Model Recommendation**: `GPT-4.1 Mini`.
 *   **Inputs**: Accumulated research findings, news logs, and competitive profiles.
 *   **Process**: Group findings into qualitative categories, evaluates the strength of evidence (Strong, Medium, Weak), detects market patterns, and computes risk scores based on probability-impact matrices.
 *   **Outputs**: Key findings, risk assessments with mitigation strategies, and an overall confidence score.
@@ -51,7 +51,7 @@ LOGOS divides strategic research and competitive intelligence into six distinct 
 ### 1.6. Writer Agent (`writer-agent` | Version 4)
 *   **Persona**: Executive Report Writer / Strategy Editor.
 *   **Role**: Composes the final formal report using a standard corporate strategy template.
-*   **Model Recommendation**: `gpt-4o` (or local reasoning models like `phi-4-mini-reasoning`).
+*   **Model Recommendation**: `GPT-4.1`.
 *   **Inputs**: Structured key findings, risk registers, and resource links.
 *   **Process**: Compiles all analytical results and formats the final markdown content.
 *   **Outputs**: A generated report object containing metadata, executive summaries, structured sections, conclusions, and citation reference lists.
