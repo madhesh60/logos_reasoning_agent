@@ -1,115 +1,158 @@
-# LOGOS — Autonomous Research Intelligence Agent
+# LOGOS: Autonomous Multi-Agent Research Intelligence System
 
-LOGOS is a production-ready, multi-agent AI research pipeline designed to automate corporate competitive intelligence and market trend scanning. Powered by Microsoft Azure AI Foundry and utilizing reasoning models, the system decomposes complex topics, conducts web search grounding, scans near-term news, builds competitor profiles, performs risk assessments, and compiles comprehensive formal reports.
-
----
-
-## Documentation Subdirectory
-
-For detailed technical specifications, setup manuals, and architecture descriptions, refer to the following documents in the `docs/` folder:
-
-*   **[Agent Design and Multi-Agent Architecture](docs/agent.md)**: Specifications of the 6-agent sequential pipeline, system prompts, A2A communication, and Human-in-the-Loop context integration.
-*   **[Hackathon Alignment and Requirements Mapping](docs/hackathonAlignment.md)**: Clear alignment matrices demonstrating how the project satisfies the requirements for Battle #2, including Work IQ, Foundry IQ, and Fabric IQ layer emulation.
-*   **[Developer Guide and Local Execution Manual](docs/developerGuide.md)**: Complete steps for cloning the repository, establishing virtual environments, configuring environment variables, running the CLI tools, launching the FastAPI server, and executing tests.
-*   **[Microsoft Azure AI Foundry Usage Guide](docs/foundryUsage.md)**: Technical breakdown of Azure Project Client initialization, Responses API orchestration, Agents SDK Threads integration, and cloud-hosted container deployments.
+LOGOS is a production-grade, enterprise-ready multi-agent research and competitive intelligence pipeline built on **Microsoft Azure AI Foundry**. It is designed to assist market analysts, executives, and investment firms in scanning industry trends, profiling competitors, assessing strategic risks, and compiling comprehensive strategy reports.
 
 ---
 
-## Features and Capabilities
+## Technical Architecture Overview
 
-*   **6-Agent LangGraph Pipeline**: Orchesrates specialized roles: Planner, Researcher, Industry News Scanner, Competitive Landscape Researcher, Analyst, and Writer.
-*   **Persistent SQLite Memory**: Stores user profiles, preferences, research history, and entity mention metrics to personalize downstream model responses.
-*   **Human-in-the-Loop (HITL) Clarification**: Dynamically generates targeted questions to refine the research scope before execution.
-*   **Azure AI Foundry Integration**: Direct invocation of visual workflow-built agents via the Responses API and stateful assistants via the Agents SDK.
-*   **Robust JSON Cleaning & Repair**: Utilities designed to strip model reasoning traces (`<think>...</think>`) and reconstruct malformed outputs.
-*   **Dual Interface System**: Interactive command-line interface (CLI) for analysts and a FastAPI REST backend for system integrations.
+LOGOS implements a sequential, context-accumulating multi-agent pipeline composed of six specialized reasoning agents. The system utilizes Microsoft Azure AI Foundry's model orchestration layer, stateful agent runtime, and Model Context Protocol (MCP) search tools to deliver highly grounded and cited analysis.
 
----
-
-## Installation
-
-LOGOS can be installed locally via PyPI:
-
-```bash
-pip install logos-research
+```
+                         [ User Query / CLI / API ]
+                                     │
+                                     ▼
+                      [ SQLite Persistent Memory Load ]
+                                     │
+                                     ▼
+                    [ Human-in-the-Loop Clarification ]
+                                     │
+                                     ▼
+                       [ Azure AI Foundry Workflow ]
+                                     │
+           ┌─────────────────────────┼─────────────────────────┐
+           ▼                         ▼                         ▼
+     Planner Agent           Researcher Agent        Industry News Scanner
+   (gpt-4o-mini/phi-4)        (o4-mini/phi-4)         (gpt-4o-mini/phi-4)
+           │                         │                         │
+           └─────────────────────────┼─────────────────────────┘
+                                     │
+                                     ▼
+           ┌─────────────────────────┼─────────────────────────┐
+           ▼                         ▼                         ▼
+   Competitive Intel           Analyst Agent             Writer Agent
+  (gpt-4o-mini/phi-4)       (gpt-4o-mini/phi-4)         (gpt-4o/phi-4)
+           │                         │                         │
+           └─────────────────────────┼─────────────────────────┘
+                                     │
+                                     ▼
+                      [ SQLite Persistent Memory Sync ]
+                                     │
+                                     ▼
+                           [ Final Strategy Report ]
 ```
 
-*Note: For active development and modifying source files, refer to the [Developer Setup Guide](docs/developerGuide.md).*
+---
+
+## Core Features and Capabilities
+
+*   **6-Agent Sequential Execution Pipeline**: Orchestrates distinct analytical stages from initial query decomposition to the final markdown report compilation.
+*   **Dual Integration APIs**: Leverages the high-performance **Responses API** for visual-workflow-backed agents and the stateful **Agents Thread & Run API** for pre-deployed cloud assistants.
+*   **Model Context Protocol (MCP) Grounding**: Integrates **Tavily Web Search** and **Azure AI Web Search (Bing)** to query real-time data indices without relying on static pre-training.
+*   **Input & Output Guardrails**: Implements strict safety validation layers to redact sensitive personally identifiable information (PII) and ensure content compliance.
+*   **Short-Term and Long-Term Memory**: Utilizes a persistent SQLite store (`memory.db`) to profile user preferences, track entity mention frequencies, and log past strategic insights.
+*   **FastAPI REST API & Command-Line Interfaces**: Features a dual-interface delivery model (an interactive REPL CLI and a fully documented FastAPI backend).
+*   **Azure Container Registry (ACR) Deployment**: Pre-configured container builds uploaded to the `reasoningagentregistry` for deployment on the stateful, hosted **Foundry Agent Service**.
 
 ---
 
-## Basic Usage
+## Agent Persona and Character Design
 
-### Command Line Interface
+The system divides labor across six specialized agents, each fine-tuned with specific system instructions and model deployment targets:
+
+1.  **Planner Agent** (`planner-agent`): Decomposes the primary business goal into structured sub-tasks. It estimates execution times and defines required tools.
+2.  **Researcher Agent** (`researcher-agent`): Executes live searches via the MCP toolboxes to fetch verified data and source URLs.
+3.  **Industry News Scanner** (`industry-news-trend-scanner`): Focuses on breaking developments and near-term market signals from the last 3-6 months.
+4.  **Competitive Landscape Researcher** (`competitive-landscape-researcher`): Maps industry competitors, assesses market share, and identifies product differentiation gaps.
+5.  **Analyst Agent** (`analyst-agent`): Performs qualitative analysis, categorizes evidence strength, and builds a probability-impact risk matrix.
+6.  **Writer Agent** (`writer-agent`): Synthesizes the aggregated findings and drafts the final formal report using a standard corporate strategy template.
+
+---
+
+## Documentation Index
+
+Detailed design specs, execution logs, and guides are organized within the `docs/` directory:
+
+*   **[Agent Design and Multi-Agent Architecture](docs/agent.md)**: Breakdown of prompt structures, A2A communication, SQLite memory structures, and the HITL interface.
+*   **[Hackathon Alignment and Requirements Mapping](docs/hackathonAlignment.md)**: Alignment matrices mapping how LOGOS emulates Work IQ, Foundry IQ, and Fabric IQ layers.
+*   **[Developer Guide and Local Execution Manual](docs/developerGuide.md)**: Step-by-step setup guides for configuring virtual environments, `.env` parameters, and running CLI tests.
+*   **[Microsoft Azure AI Foundry Usage Guide](docs/foundryUsage.md)**: Deep dive into Azure SDK project client calls, Responses API, Agents Thread API, and ACR deployment patterns.
+
+---
+
+## Quick Start & Installation
+
+### Local Developer Installation
+
+LOGOS can be installed in editable developer mode to modify source files:
 
 ```bash
-# Start an interactive research REPL (recommended)
+# Clone the repository
+git clone https://github.com/madhesh60/logos_reasoning_agent.git
+cd logos_reasoning_agent
+
+# Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# Install dependencies and editable package
+pip install -e .
+pip install -e .[dev]
+```
+
+### CLI Command Execution
+
+```bash
+# Launch the interactive research shell (REPL)
 logos
 
-# Run a single research query non-interactively
-logos -q "What are the latest developments in NLP?"
+# Execute a query directly and save the report
+logos -q "Evaluate the 2026 market prospects for hydrogen fuel cells."
 
-# Execute a query bypassing cloud agents (local emulation mode)
-logos --no-a2a -q "Summarize trends in fintech."
+# Bypass cloud API calls (Local Emulation Mode)
+logos --no-a2a -q "Summarize advancements in solid-state batteries."
 
-# Disable Human-in-the-Loop questions
-logos --no-hitl -q "Analyze the cloud computing market."
-
-# Diagnostic check for model endpoints
+# Run a diagnostics check on model endpoints
 logos --model-test
 ```
 
-### FastAPI Web Server
+### FastAPI Web Server Execution
 
 ```bash
-# Launch the local host API server
+# Launch the API server locally
 uvicorn main:app --reload --port 8000
 ```
-Swagger interactive documentation is served at [http://localhost:8000/docs](http://localhost:8000/docs).
+*   **Interactive Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+*   **ReDoc Technical Specifications**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
 ---
 
-## Technical Architecture
+## Production Deployment Workflow
 
-```
-User Query ──► SQLite Memory Context Load ──► HITL Questioning ──► 6-Agent Cloud Orchestration
-                                                                         │
-                                                                   [ planner-agent ]
-                                                                         │
-                                                                 [ researcher-agent ]
-                                                                         │
-                                                             [ industry-news-scanner ]
-                                                                         │
-                                                               [ competitive-agent ]
-                                                                         │
-                                                                  [ analyst-agent ]
-                                                                         │
-                                                                   [ writer-agent ]
-                                                                         │
-                                                                         ▼
-                                                                  Generated Report
-```
+LOGOS is containerized and ready to be pushed to your cloud environment:
+
+1.  **Build the Container Image**:
+    ```bash
+    docker build -t reasoningagentregistry.azurecr.io/logos-research-agent:latest .
+    ```
+2.  **Authenticate & Push to Azure Container Registry (`reasoningagentregistry`)**:
+    ```bash
+    az acr login --name reasoningagentregistry
+    docker push reasoningagentregistry.azurecr.io/logos-research-agent:latest
+    ```
+3.  **Provision in Azure AI Foundry**:
+    Deploy the pushed container image as a managed hosted agent within the **Foundry Agent Service**, attaching Managed Identities (Entra ID) for secure keyless access to Azure OpenAI and Azure Search endpoints.
 
 ---
 
-## Proof of Execution and Traces
+## System Observability and Verification
 
-This section contains visual evidence of the running application, including CLI traces, container outputs, and Azure AI portal configurations.
+LOGOS outputs structured JSON logging formatted by `structlog`, making it directly indexable by monitoring solutions like Azure Monitor and Application Insights.
 
-### 1. Command-Line Interface Execution Trace
-Below is a screenshot demonstrating the interactive setup process, Human-in-the-Loop question prompts, and final report rendering within the terminal interface:
-
-![CLI Execution Trace](docs/images/cli_execution_trace.png)
-
-### 2. Containerized Execution Logs
-Below is the output log validating the container compilation and FastAPI server startup within a sandbox environment:
-
-![Container Execution Logs](docs/images/container_execution_logs.png)
-
-### 3. Azure AI Foundry Portal Configuration
-Below is a dashboard capture showing the pre-deployed reasoning agent models and endpoints configured inside the Azure AI Foundry console:
-
-![Azure AI Foundry Portal](docs/images/azure_foundry_portal.png)
+Run the unit test suite to verify pipeline integrity:
+```bash
+pytest tests/test_agents.py -v
+```
 
 ---
 

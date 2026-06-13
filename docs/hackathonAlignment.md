@@ -1,73 +1,75 @@
 # Hackathon Alignment and Requirements Mapping
 
-This document maps the design, architecture, and implementation of the LOGOS Autonomous Research Intelligence Agent to the official requirements of the **Microsoft Agent League Hackathon: Battle #2 - Reasoning Agents with Microsoft Foundry**.
+This document details how the design, architecture, and implementation of the LOGOS Multi-Agent Research System align with the official guidelines and requirements of the **Microsoft Agent League Hackathon: Battle #2 - Reasoning Agents with Microsoft Foundry**.
 
 ---
 
 ## 1. Challenge & Scenario Alignment
 
-LOGOS implements a multi-agent system designed for **Enterprise Intelligence and Research Automation**. The scenario addresses the need for organizations to conduct deep, context-aware competitive research, scanner trends, and generate comprehensive research reports using reasoning models.
-
-The system mirrors the structure of a professional research division by dividing responsibilities among six agents, ensuring specialization, deep analytical decomposition, and high-fidelity output.
+LOGOS is built for **Enterprise Intelligence, Business Strategy, and Investment Analysis**. It serves as a virtual corporate research division that automates complex market research, competitive analysis, and strategic risk assessments. By orchestrating a pipeline of six specialized agent characters, the system decomposes ambiguous queries, retrieves live web intelligence, maps competitive dynamics, and compiles strategy reports to guide corporate and investment decision-making.
 
 ---
 
 ## 2. Microsoft IQ Layer Integration
 
-The hackathon requires integrating at least one Microsoft IQ intelligence layer. LOGOS integrates concepts and patterns representing all three layers, grounded in local databases and cloud APIs:
+The hackathon requires integrating at least one Microsoft IQ intelligence layer. LOGOS incorporates architecture patterns and local configurations that directly map to all three IQ concepts.
 
-### Work IQ
-*   **Definition**: Understanding the user's work context, collaboration patterns, and organizational focus.
+### 2.1. Work IQ (Context and Preference Alignment)
+*   **Concept**: Aligning agent responses with the user's role, work context, and organization.
 *   **LOGOS Implementation**:
-    *   Implemented via the persistent SQLite profile storage (`~/.logos/memory.db`).
-    *   During initialization, LOGOS records the user's name, role, organization, research domain, and preferred depth of analysis.
-    *   These signals are combined with real-time feedback gathered during the Human-in-the-Loop (HITL) phase (clarifying focus areas and timeline constraints).
-    *   The resulting context is injected into agent prompts, ensuring the generated report aligns with the user's organizational role.
+    *   **SQLite Memory Context**: The system loads the user's name, role, organization, research domain, and preferred depth of analysis from a local SQLite profile database.
+    *   **Human-in-the-Loop (HITL) Clarification**: Before agent execution, the coordinator prompts the user with query-specific questions to narrow focus areas and constraints.
+    *   **Context Integration**: Stored preferences and answers are formatted into a structured context block and prepended to downstream system prompts, ensuring output reports align with the user's organizational context.
 
-### Foundry IQ
-*   **Definition**: Grounding agents in external knowledge bases, web search, and data sources with proper citations.
+### 2.2. Foundry IQ (Grounded Retrieval and Citation)
+*   **Concept**: Grounding responses in validated knowledge bases, document stores, and real-time search engines.
 *   **LOGOS Implementation**:
-    *   Integrates search capabilities using the Microsoft Agent Framework and custom Model Context Protocol (MCP) search toolboxes.
-    *   The Researcher Agent fetches live search indices, and the Industry News Scanner targets recent press.
-    *   The system enforces reference-aware generation: the Writer Agent lists actual source links and URLs in a dedicated "Resources & References" section, verifying the output is grounded.
+    *   **Model Context Protocol (MCP) Servers**: The system implements an MCP client that integrates with **Tavily Web Search** and **Azure AI Web Search (Bing)**.
+    *   **Live Web Grounding**: The Researcher and News Scanner agents execute searches via the MCP servers to gather recent facts and developments.
+    *   **URL Citations**: The Writer agent compiles retrieved references into a dedicated "Resources & References" section, ensuring the report is fully verified and cited.
 
-### Fabric IQ
-*   **Definition**: A semantic foundation mapping structured relationships between business entities, patterns, and historical signals.
+### 2.3. Fabric IQ (Semantic Mapping and Ontology)
+*   **Concept**: Connecting business concepts, entity relationships, and historical patterns.
 *   **LOGOS Implementation**:
-    *   Implemented through the semantic schema in the SQLite database.
-    *   LOGOS extracts and correlates research sessions, tracking entity metrics (such as mention counts for frequently researched companies or technologies).
-    *   Users can bookmark key analytical insights (`insights` table), linking them back to specific search sessions.
-    *   This semantic memory builds an ontology of the user's research focus over time, which is queried to enrich subsequent prompts.
+    *   **SQLite Semantic Schema**: The database schema structures relationships between research sessions (`queries`), entity mention counters (`tracked_entities`), and manual bookmarks (`insights`).
+    *   **Historical Analysis**: As queries run, the system tracks entity mention frequencies. Users can bookmark findings, linking them back to query sessions.
+    *   **Ontario Enrichment**: The system queries historical entity counts and bookmarked insights to enrich new runs, building a semantic ontology of the user's research focus over time.
 
 ---
 
 ## 3. Data Hygiene and Synthetic Data Compliance
 
-In strict compliance with the hackathon rules regarding security and privacy, LOGOS enforces the following guardrails:
+LOGOS maintains strict data compliance and security guardrails in accordance with hackathon rules:
 
-*   **No PII or Customer Data**: The system is designed to analyze general industry trends and public competitive landscapes. No customer records, personal data, or private credentials are sent to the model endpoints.
-*   **Synthetic/Demo Seeding**: When executing first-time setup or mock runs, the database populates with synthetic profiles and generic search queries (e.g., standard tech sectors).
-*   **Credentials Separation**: Credentials, API keys, and endpoints are kept entirely out of source control. They are loaded at runtime from a local `.env` file, which is blacklisted in `.gitignore`.
-
----
-
-## 4. Production-Ready Deployment Story
-
-LOGOS is built to transition from local prototype to cloud-scale deployment using **Hosted Agents in Foundry Agent Service**:
-
-*   **Containerization**: The codebase includes a `Dockerfile` and `docker-compose.yml` configured to build a lightweight, production-ready container image running the FastAPI web server.
-*   **Foundry Agent Service Compatibility**:
-    *   The web server exposes endpoints (`/ask`, `/research`, `/competitive`) that allow other enterprise workflows to query the agent network.
-    *   In a hosted cloud environment, the local SQLite database can be mapped to persistent storage volumes, preserving session memory.
-    *   Managed Identities (Entra ID) are recommended to call downstream Azure OpenAI and search services, eliminating the need to package hardcoded secrets in the container.
+*   **No PII or Customer Data**: The system is designed to analyze public industry trends and competitive structures. No customer records, personal details, or private credentials are sent to LLM endpoints.
+*   **Synthetic/Demo Data**: During first-time setup or development runs, the SQLite store initializes using synthetic profiles and generic search queries.
+*   **Credentials Separation**: Environmental variables, API keys, and endpoints are loaded at runtime from a local `.env` file, which is excluded from source control via `.gitignore`.
 
 ---
 
-## 5. Telemetry, Observability, and Evaluation
+## 4. Input and Output Guardrails
 
-LOGOS integrates tools to evaluate system behavior and measure performance:
+To prevent compliance risks and output deviations, LOGOS implements input/output guardrails:
 
-*   **Structured Logging**: Utilizes `structlog` to output JSON logs mapping agent transitions, execution states, and error handling.
-*   **Confidence Metrics**: The Analyst and Writer agents compute confidence scores (representing data quality and source consistency) which are returned in the API responses and report metadata.
-*   **Performance Profiling**: The orchestrator tracks elapsed execution times for each agent stage, assisting in performance optimization.
-*   **Automated Verification**: The test suite in `tests/test_agents.py` verifies core agent logic and LangGraph orchestration paths using mock LLMs, providing a stable foundation for CI/CD pipelines.
+*   **Input Guardrails**: Incoming queries are scanned to ensure no API keys, connection strings, or customer database credentials are submitted. The system automatically redacts suspected PII patterns.
+*   **Output Guardrails**: Output JSON content is verified to ensure structured compliance. A custom cleaning utility parses reasoning blocks (removing `<think>...</think>` tags) and repairs malformed JSON tokens using the `json-repair` library before final display.
+
+---
+
+## 5. Deployment Story: Azure Container Registry & Hosted Agent Service
+
+LOGOS is designed to transition from local prototype to cloud-scale deployment using **Hosted Agents in Foundry Agent Service**:
+
+*   **Containerization**: The project includes a `Dockerfile` and `docker-compose.yml` to package the FastAPI web server into a lightweight, production-ready container image.
+*   **Azure Container Registry (`reasoningagentregistry`)**: The container image is configured to be pushed to the deployed Azure Container Registry `reasoningagentregistry` (accessible via `reasoningagentregistry.azurecr.io`).
+*   **Hosted Agent Service**: The container is pulled by the Foundry Agent Service, which provisions compute, assigns Entra ID managed identities, and exposes a secure dedicated endpoint for the research pipeline.
+
+---
+
+## 6. Telemetry, Observability, and Evaluation
+
+The system integrates observability tools to monitor multi-agent execution:
+
+*   **Structured Logging**: Utilizes `structlog` to output structured JSON logs mapping agent status changes, execution durations, and warning events.
+*   **Confidence Metrics**: The Analyst and Writer agents calculate data confidence scores based on source consistency and evidence strength, returning them in the metadata of the strategy report.
+*   **CI/CD Verification**: An automated test suite in `tests/test_agents.py` validates agent orchestration flows and response schemas, ensuring stability before container builds are pushed to the registry.

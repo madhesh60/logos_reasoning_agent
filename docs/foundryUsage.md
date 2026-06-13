@@ -1,34 +1,38 @@
 # Microsoft Azure AI Foundry Usage and SDK Integration
 
-This document outlines the design decisions and technical implementations for leveraging Microsoft Azure AI Foundry services, endpoints, and SDK capabilities within the LOGOS system.
+This document outlines the architectural decisions and implementation patterns for integrating Microsoft Azure AI Foundry services, SDKs, and container deployment structures within the LOGOS Multi-Agent system.
 
 ---
 
-## 1. Project Client Initialization
+## 1. Project Client Connection and Authentication
 
-LOGOS connects to Azure AI Foundry using the **Azure AI Projects SDK** (`azure-ai-projects`). The client is initialized using environment parameters that connect to the project's workspace endpoint.
+LOGOS connects to Azure AI Foundry resources using the **Azure AI Projects SDK** (`azure-ai-projects`). To align with enterprise security guidelines, the application avoids hardcoding access keys in the source files, relying on keyless authentication where possible.
 
-*   **Code Reference**: In `src/orchestration/research_workflow.py` and `main.py`, connections are established using:
-    ```python
-    from azure.ai.projects import AIProjectClient
-    from azure.identity import DefaultAzureCredential
+### 1.1. Client Initialization
+Connections are established using the `AIProjectClient` utility:
+```python
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
 
-    client = AIProjectClient(
-        endpoint=AZURE_PROJECT_ENDPOINT,
-        credential=DefaultAzureCredential()
-    )
-    ```
-*   **Security Compliance**: Local development utilizes the `DefaultAzureCredential` which checks active environmental tokens, CLI logins (`az login`), or managed credentials. No access keys are hardcoded in the codebase, in alignment with Microsoft's security guidelines.
+client = AIProjectClient(
+    endpoint=AZURE_PROJECT_ENDPOINT,
+    credential=DefaultAzureCredential(exclude_interactive_browser_credential=True)
+)
+```
+
+### 1.2. Authentication Methods
+*   **Local Development**: Evaluates active environment variables, developer credentials, or active Azure CLI logins (`az login`).
+*   **Production Cloud Environments**: Resolves using a **Managed Identity (Entra ID)** assigned to the hosted agent service, ensuring secure connection to model deployments, search indexes, and vault assets.
 
 ---
 
 ## 2. API Selection: Responses API vs. Agents SDK
 
-LOGOS adopts a hybrid integration approach based on the specific capabilities and performance requirements of each agent stage:
+LOGOS adopts a hybrid integration approach based on the specific capabilities and execution patterns of each agent stage:
 
-### Responses API (Main Pipeline)
-The main 6-agent research pipeline (Planner, Researcher, Industry News, Competitive, Analyst, and Writer) is orchestrated using the **OpenAI Responses API** via the Foundry project endpoint.
-*   **Rationale**: The Responses API is compatible with visual workflow-configured agents built inside the Azure AI Foundry Portal. Using this client allows the system to invoke agents by their registered name and version without managing stateful threads for each hop.
+### 2.1. Responses API (Visual Workflow Integration)
+The main multi-agent execution pipeline (Planner, Researcher, Industry News Scanner, Competitive Landscape, Analyst, and Writer) is coordinated using the **OpenAI Responses API** via the Foundry project endpoint:
+*   **Rationale**: The Responses API allows calling cloud-configured agents by their registered name and version without the overhead of stateful thread tracking.
 *   **Implementation**:
     ```python
     oc = client.get_openai_client()
@@ -44,53 +48,89 @@ The main 6-agent research pipeline (Planner, Researcher, Industry News, Competit
     )
     return resp.output_text
     ```
-*   **Benefits**: Minimal request overhead, low execution latency, and direct compatibility with cloud-managed agent references.
+*   **Benefits**: Stateless execution, low request latency, and direct compatibility with cloud-managed agent references.
 
-### Agents Thread and Run API (Competitive Landscape Endpoint)
-For the specialized competitive-landscape-researcher endpoint (`POST /competitive`), the system utilizes the stateful **Azure AI Agents SDK** Thread and Run interfaces.
-*   **Rationale**: This agent is pre-deployed as a standalone assistant. The stateful Thread API allows conversational persistence, separating query context into discrete threads managed in the cloud.
+### 2.2. Agents Thread and Run API (Stateful Conversational Flows)
+For specialized competitive analysis requests (`POST /competitive`), the system utilizes the **Azure AI Agents SDK** Thread and Run interfaces:
+*   **Rationale**: This agent is pre-deployed as a standalone assistant. Managing conversational state in the cloud via stateful Thread APIs is ideal for multi-turn discussions.
 *   **Implementation**:
     ```python
-    # 1. Initialize thread
+    # 1. Initialize Thread
     thread = client.agents.create_thread()
     
-    # 2. Post user message
+    # 2. Post User Query Message
     client.agents.create_message(
         thread_id=thread.id,
         role="user",
         content=query,
     )
     
-    # 3. Create and process the run
+    # 3. Create and Process the Run
     run = client.agents.create_and_process_run(
         thread_id=thread.id,
         agent_id=agent_name,
     )
     
-    # 4. Fetch response messages
+    # 4. Fetch Response Message Payload
     messages = client.agents.list_messages(thread_id=thread.id)
     ```
 
 ---
 
-## 3. Model Optimization: Phi-4-mini-reasoning
+## 3. Reasoning Model Optimization (Phi-4-mini-reasoning)
 
-LOGOS is configured to use reasoning models (e.g., `phi-4-mini-reasoning`) deployed on Azure AI Foundry:
+When calling reasoning models (e.g., `phi-4-mini-reasoning` or `o4-mini`), responses include intermediate reasoning traces enclosed within `<think>...</think>` tags. To prevent these traces from corrupting downstream JSON parsing, LOGOS implements a custom parsing utility (`clean_and_parse_json` in `src/utils/config.py`):
 
-*   **Reasoning Block Parsing**: Reasoning models output thoughts inside `<think>...</think>` tags before returning their final text. These blocks can consume thousands of tokens, which can interfere with downstream JSON parsing.
-*   **Clean and Repair Engine**: A custom utility `clean_and_parse_json` in `src/utils/config.py` is implemented to handle these responses:
-    1.  Strips `<think>...</think>` tags using regular expressions (handling both complete and unclosed blocks).
-    2.  Removes Markdown code blocks (e.g., ` ```json ... ``` `).
-    3.  Extracts the outermost JSON object (`{...}`) or array (`[...]`).
-    4.  Corrects backslash escape sequences and trailing commas.
-    5.  Applies a parsing recovery loop using the `json-repair` library if the JSON is truncated.
+1.  **Tag Extraction**: Scans response text using regular expressions to remove `<think>...</think>` blocks (handling both complete and unclosed blocks).
+2.  **Markdown Cleaning**: Identifies and removes enclosing Markdown code blocks (e.g., ` ```json ... ``` `).
+3.  **JSON Outermost Parsing**: Extracts the outermost JSON object (`{...}`) or array (`[...]`) bounds.
+4.  **Parsing Recovery Loop**: If standard library `json.loads` fails, it applies a parsing recovery pass using the `json-repair` library to correct syntax errors, backslash escape sequences, and trailing commas.
 
 ---
 
-## 4. Cloud Deployment (Hosted Agent Service)
+## 4. Containerized Hosted Agent Service Deployment
 
-To deploy the LOGOS FastAPI backend and orchestrator to the **Azure AI Foundry Hosted Agent Service**, the codebase is prepared with:
+LOGOS is ready to be packaged and deployed to the stateful **Hosted Agent Service** on Azure AI Foundry. The deployment uses the pre-configured Azure Container Registry named `reasoningagentregistry`.
 
-*   **Dockerfile**: Uses a slim Python 3.10 base image, installs system requirements, copies source folders (`src/`, `logos/`), and launches the FastAPI application using `uvicorn`.
-*   **State Persistence**: The local SQLite database can be mapped to an Azure File Share or persistent volume mount within the Azure Container Registry deployment context to maintain long-term memory across sessions.
-*   **Observability Integration**: JSON log formats are standard (`LOG_FORMAT=json`), making it compatible with Azure Monitor, Application Insights, and log collection facilities in Azure Container Instances.
+### 4.1. Packaging and Docker Configurations
+The `Dockerfile` in the root of the project packages the FastAPI REST server:
+```dockerfile
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+RUN pip install -e .
+
+EXPOSE 8080
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+### 4.2. ACR Build and Push Commands
+Execute the following commands to push the image to `reasoningagentregistry`:
+```bash
+# Authenticate against your Azure Container Registry
+az acr login --name reasoningagentregistry
+
+# Tag and build the local container image
+docker build -t reasoningagentregistry.azurecr.io/logos-research-agent:latest .
+
+# Push image to registry
+docker push reasoningagentregistry.azurecr.io/logos-research-agent:latest
+```
+
+### 4.3. Cloud Provisioning and State Mapping
+Once pushed:
+1.  **Service Pull**: The Hosted Agent Service pulls the container image from `reasoningagentregistry.azurecr.io`.
+2.  **Identities**: Attach an Entra ID Managed Identity to the provisioned container service to authorize calls to downstream model endpoints and MCP servers.
+3.  **Persistent Volume Mounts**: To preserve session memory across container recycles, map the SQLite store file path (`~/.logos/memory.db`) to a persistent storage volume (e.g., Azure File Share).
+4.  **Telemetry & Logging**: The FastAPI server logs structured JSON via `structlog`, which is piped directly to Azure Monitor and Application Insights.

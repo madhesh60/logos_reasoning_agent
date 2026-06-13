@@ -82,6 +82,54 @@ from logos.hitl.questioner import generate_questions
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+class DynamicStatus:
+    """Async context manager that dynamically updates console status with changing phrases."""
+    def __init__(self, console, initial_msg: str, phrases: list[str], spinner="line", spinner_style="grey46"):
+        self.console = console
+        self.initial_msg = initial_msg
+        self.phrases = phrases
+        self.spinner = spinner
+        self.spinner_style = spinner_style
+        self._status = None
+        self._task = None
+
+    async def __aenter__(self):
+        self._status = self.console.status(
+            self.initial_msg,
+            spinner=self.spinner,
+            spinner_style=self.spinner_style
+        )
+        self._status.__enter__()
+        self._task = asyncio.create_task(self._update_loop())
+        return self._status
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        if self._status:
+            self._status.__exit__(exc_type, exc_val, exc_tb)
+
+    async def _update_loop(self):
+        import time
+        start_time = time.time()
+        idx = 0
+        try:
+            while True:
+                await asyncio.sleep(4)
+                elapsed = int(time.time() - start_time)
+                phrase = self.phrases[idx % len(self.phrases)]
+                self._status.update(
+                    f"  [{self.spinner_style}]{phrase} ({elapsed}s elapsed)...[/]"
+                )
+                idx += 1
+        except asyncio.CancelledError:
+            pass
+
+
 def _rule(title: str = "") -> None:
     if title:
         console.print(Rule(f"[{C_DIM}]{title}[/]", style=C_RULE))
@@ -208,8 +256,19 @@ async def _run_hitl(query: str, memory: MemoryStore) -> str:
 
     memory_ctx = memory.build_context_string() if not memory.is_first_run() else ""
 
-    with console.status(
+    hitl_phrases = [
+        "Preparing questions... Reading your prompt",
+        "Preparing questions... Understanding the agent's purpose",
+        "Preparing questions... Identifying evaluation dimensions",
+        "Preparing questions... Cooking up questions",
+        "Preparing questions... Checking for blind spots",
+        "Preparing questions... Adding a pinch of quality",
+    ]
+
+    async with DynamicStatus(
+        console,
         f"  [{C_DIM}]Preparing questions...[/]",
+        hitl_phrases,
         spinner="line",
         spinner_style=C_DIM,
     ):
@@ -495,8 +554,22 @@ async def execute_query(
     workflow = ResearchWorkflow(enable_a2a=enable_a2a, max_retries=1)
     t0 = time.time()
 
-    with console.status(
+    research_phrases = [
+        "This could take a few minutes... Reading your prompt & loading context",
+        "This could take a few minutes... Understanding the agent's purpose",
+        "This could take a few minutes... Identifying & evaluating research dimensions",
+        "This could take a few minutes... Breaking down what matters most",
+        "This could take a few minutes... Cooking up research vectors & strategies",
+        "This could take a few minutes... Scanning sources & searching the web",
+        "This could take a few minutes... Checking for blind spots & verifying facts",
+        "This could take a few minutes... Synthesizing findings & drafting the report",
+        "This could take a few minutes... Adding a pinch of quality & polishing response"
+    ]
+
+    async with DynamicStatus(
+        console,
         f"  [{C_DIM}]Research in progress...[/]",
+        research_phrases,
         spinner="line",
         spinner_style=C_DIM,
     ):
@@ -681,7 +754,19 @@ async def run_model_test() -> None:
     from openai import AzureOpenAI
     client = AzureOpenAI(base_url=endpoint.rstrip("/"), api_key=api_key)
 
-    with console.status(f"  [{C_DIM}]Pinging model...[/]", spinner="line"):
+    test_phrases = [
+        "Pinging model... Establishing connection",
+        "Pinging model... Awaiting response",
+        "Pinging model... Evaluating connection quality"
+    ]
+
+    async with DynamicStatus(
+        console,
+        f"  [{C_DIM}]Pinging model...[/]",
+        test_phrases,
+        spinner="line",
+        spinner_style=C_DIM,
+    ):
         try:
             r = client.chat.completions.create(
                 model=deployment,
