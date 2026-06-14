@@ -225,6 +225,21 @@ class TestResearcherAgent:
 
             assert len(results) == len(queries)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("queries,expected_len", [
+        ([], 0),
+        (["single query"], 1),
+        (["query1", "query2", "query3"], 3),
+    ])
+    async def test_batch_search_edge_cases(self, mock_llm, mock_config, queries, expected_len):
+        """Test batch search with varying inputs including empty and single queries."""
+        with patch("src.utils.config.get_azure_openai_config", return_value=mock_config):
+            from src.agents.researcher import ResearcherAgent
+
+            agent = ResearcherAgent(llm=mock_llm)
+            results = await agent.batch_search(queries, max_results_per_query=2)
+            assert len(results) == expected_len
+
 
 class TestAnalystAgent:
     """Tests for the Analyst Agent."""
@@ -316,7 +331,27 @@ class TestSystemIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_workflow(self, mock_llm, mock_config):
         """Test complete workflow from query to report."""
-        with patch("src.utils.config.get_azure_openai_config", return_value=mock_config):
+        mock_response = """
+        {
+            "metadata": {
+                "title": "Indian EV Market Risks",
+                "report_id": "r123",
+                "confidence_score": 0.95
+            },
+            "executive_summary": "Summary of EV risks.",
+            "sections": [
+                {
+                    "title": "Regulatory Risks",
+                    "content": "Policy adjustments and subsidy concerns."
+                }
+            ],
+            "conclusions": ["Conclusion 1"],
+            "recommendations": ["Recommendation 1"],
+            "citations": []
+        }
+        """
+        with patch("src.utils.config.get_azure_openai_config", return_value=mock_config), \
+             patch("src.orchestration.research_workflow._responses_call", return_value=mock_response):
             from src.orchestration.research_workflow import ResearchWorkflow
 
             workflow = ResearchWorkflow()
@@ -325,6 +360,7 @@ class TestSystemIntegration:
 
             assert result is not None
             assert "status" in result
+            assert result["status"] == "completed"
 
 
 if __name__ == "__main__":

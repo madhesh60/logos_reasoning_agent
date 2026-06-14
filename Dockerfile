@@ -1,11 +1,11 @@
 FROM python:3.11-slim
 
-# Bust stale CI cache if needed: docker build --build-arg CACHEBUST=$(date +%s)
-ARG CACHEBUST=1
-
 # Metadata
+ARG GIT_SHA="unknown"
 LABEL maintainer="Reasoning-Agent-Hackathon"
 LABEL description="OpenAI Reasoning Multi-Agent System — Microsoft Agent League Hackathon"
+LABEL version="1.0.0"
+LABEL git_sha=${GIT_SHA}
 
 WORKDIR /app
 
@@ -17,11 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies first (layer caching)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip setuptools && \
   pip install --no-cache-dir -r requirements.txt
+
+# Bust stale CI cache if needed: docker build --build-arg CACHEBUST=$(date +%s)
+ARG CACHEBUST=1
 
 # Copy source code
 COPY src/ ./src/
+COPY logos/ ./logos/
 COPY main.py .
 COPY run_agent.py .
 

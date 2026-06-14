@@ -34,14 +34,19 @@ if sys.platform == "win32":
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 import structlog
+import uuid
 
 logger = structlog.get_logger(__name__)
+
+# ── CORS Configuration ────────────────────────────────────────────────────────
+cors_origins_str = os.environ.get("CORS_ORIGINS", "http://localhost:8000")
+cors_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -58,47 +63,136 @@ Uses OpenAI models on Azure AI Foundry with:
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    contact={
+        "name": "Hackathon Support",
+        "email": "support@example.com",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+    openapi_tags=[
+        {
+            "name": "System",
+            "description": "Liveness, readiness and operational health endpoints.",
+        },
+        {
+            "name": "Research Pipeline",
+            "description": "Multi-agent deep research and report generation workflows.",
+        },
+        {
+            "name": "Competitive Intelligence",
+            "description": "Direct integrations with specialized Azure AI Foundry agents.",
+        },
+    ]
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ── Custom Middlewares ────────────────────────────────────────────────────────
+@app.middleware("http")
+async def add_security_headers_and_logging(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    try:
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+    except AttributeError:
+        pass
+        
+    t0 = datetime.utcnow()
+    response = await call_next(request)
+    elapsed = (datetime.utcnow() - t0).total_seconds()
+    
+    # Add Security Headers
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    
+    logger.info(
+        "request_processed",
+        path=request.url.path,
+        method=request.method,
+        status_code=response.status_code,
+        elapsed_seconds=elapsed,
+        request_id=request_id
+    )
+    return response
+
 
 # ── Request / Response Models ────────────────────────────────────────────────
 class AskRequest(BaseModel):
-    query: str
-    max_retries: int = 2
-    enable_web_search: bool = True
+    query: str = Field(
+        ..., 
+        description="The research query to run", 
+        examples=["What are the top 3 investment risks in the Indian EV market?"]
+    )
+    max_retries: int = Field(
+        2, 
+        ge=1, 
+        le=5, 
+        description="Maximum number of retries for failed agents (1 to 5)",
+        examples=[2]
+    )
+    enable_web_search: bool = Field(
+        True, 
+        description="Enable real-time web search via MCP",
+        examples=[True]
+    )
 
 
 class CompetitiveRequest(BaseModel):
-    query: str
-    company: str = ""
+    query: str = Field(
+        ..., 
+        description="Competitive analysis prompt", 
+        examples=["Compare market share and battery technology of competitors"]
+    )
+    company: str = Field(
+        "", 
+        description="Target company name (optional)", 
+        examples=["Tata Motors"]
+    )
 
 
 class ResearchRequest(BaseModel):
-    query: str
-    include_competitive: bool = True
+    query: str = Field(
+        ..., 
+        description="Comprehensive research topic", 
+        examples=["Solid-state battery commercialization timeline"]
+    )
+    include_competitive: bool = Field(
+        True, 
+        description="Include competitive intelligence from Azure Agent",
+        examples=[True]
+    )
 
 
 class AgentResponse(BaseModel):
-    status: str
-    query: str
-    report: dict
-    reasoning_steps: list[str] = []
-    confidence: float = 0.0
-    execution_time_seconds: float = 0.0
-    agents_used: list[str] = []
-    timestamp: str = ""
+    status: str = Field(..., description="Execution status")
+    query: str = Field(..., description="The original query")
+    report: dict = Field(..., description="The structured report results")
+    reasoning_steps: list[str] = Field(default_factory=list, description="List of reasoning steps taken")
+    confidence: float = Field(default=0.0, description="Overall confidence level (0-1)")
+    execution_time_seconds: float = Field(default=0.0, description="Total execution time in seconds")
+    agents_used: list[str] = Field(default_factory=list, description="List of agents involved in the query")
+    timestamp: str = Field(default="", description="ISO timestamp of completion")
 
 
-# ── Health Check ─────────────────────────────────────────────────────────────
-@app.get("/health", tags=["System"])
+# ── Health & Readiness Check ──────────────────────────────────────────────────
+@app.get(
+    "/health", 
+    tags=["System"],
+    summary="Get Liveness Health Status",
+    response_description="Returns 200 and liveness indicators if the server is up."
+)
 async def health():
     """Liveness probe — returns 200 if the API is running."""
     return {
@@ -109,8 +203,40 @@ async def health():
     }
 
 
+@app.get(
+    "/readiness", 
+    tags=["System"],
+    summary="Get Readiness Probe Status",
+    response_description="Returns 200 if key environment variables are set, otherwise 503."
+)
+async def readiness():
+    """Readiness probe — checks if required environment variables are set."""
+    required_vars = [
+        "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_DEPLOYMENT"
+    ]
+    missing = [var for var in required_vars if not os.environ.get(var)]
+    
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Service not ready. Missing environment variables: {', '.join(missing)}"
+        )
+    return {
+        "status": "ready",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 # ── Main Pipeline: POST /ask ─────────────────────────────────────────────────
-@app.post("/ask", response_model=AgentResponse, tags=["Research Pipeline"])
+@app.post(
+    "/ask", 
+    response_model=AgentResponse, 
+    tags=["Research Pipeline"],
+    summary="Execute Multi-Agent Research",
+    response_description="Returns the structured research report and metadata."
+)
 async def ask(request: AskRequest):
     """
     Run the full 4-agent research pipeline.
@@ -179,7 +305,12 @@ async def ask(request: AskRequest):
 
 
 # ── Competitive Analysis: POST /competitive ───────────────────────────────────
-@app.post("/competitive", tags=["Competitive Intelligence"])
+@app.post(
+    "/competitive", 
+    tags=["Competitive Intelligence"],
+    summary="Fetch Competitive Intelligence",
+    response_description="Returns competitive analysis or falls back to local analyst."
+)
 async def competitive_analysis(request: CompetitiveRequest):
     """
     Call the Azure AI Foundry 'competitive-landscape-researcher' agent
@@ -279,7 +410,12 @@ async def competitive_analysis(request: CompetitiveRequest):
 
 
 # ── Combined Research: POST /research ────────────────────────────────────────
-@app.post("/research", tags=["Research Pipeline"])
+@app.post(
+    "/research", 
+    tags=["Research Pipeline"],
+    summary="Combined Research & Competitive Intelligence",
+    response_description="Returns deep research combined with competitive insights."
+)
 async def combined_research(request: ResearchRequest):
     """
     Run our 4-agent pipeline + competitive intelligence in parallel.
