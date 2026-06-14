@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 # ── Windows UTF-8 ─────────────────────────────────────────────────────────────
-if sys.platform == "win32":
+if sys.platform == "win32" and "pytest" not in sys.modules and "_pytest" not in sys.modules:
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
@@ -76,6 +76,54 @@ from logos.config   import Config, PROVIDERS
 from logos.memory.store import MemoryStore
 from logos.hitl.questioner import generate_questions
 from logos.research.pipeline import ResearchPipeline, STAGES
+
+
+class DynamicStatus:
+    """Async context manager that dynamically updates console status with changing phrases."""
+    def __init__(self, console, initial_msg: str, phrases: list[str], spinner="line", spinner_style="grey46"):
+        self.console = console
+        self.initial_msg = initial_msg
+        self.phrases = phrases
+        self.spinner = spinner
+        self.spinner_style = spinner_style
+        self._status = None
+        self._task = None
+
+    async def __aenter__(self):
+        self._status = self.console.status(
+            self.initial_msg,
+            spinner=self.spinner,
+            spinner_style=self.spinner_style
+        )
+        self._status.__enter__()
+        self._task = asyncio.create_task(self._update_loop())
+        return self._status
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        if self._status:
+            self._status.__exit__(exc_type, exc_val, exc_tb)
+
+    async def _update_loop(self):
+        import time
+        start_time = time.time()
+        idx = 0
+        try:
+            while True:
+                await asyncio.sleep(4)
+                elapsed = int(time.time() - start_time)
+                phrase = self.phrases[idx % len(self.phrases)]
+                self._status.update(
+                    f"  [{self.spinner_style}]{phrase} ({elapsed}s elapsed)...[/]"
+                )
+                idx += 1
+        except asyncio.CancelledError:
+            pass
 
 
 # ── UI helpers ────────────────────────────────────────────────────────────────

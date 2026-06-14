@@ -7,6 +7,7 @@ langchain-community>=0.3.0
 # Azure AI Foundry and OpenAI
 azure-identity>=1.17.0
 azure-ai-projects>=2.0.0
+azure-ai-agents>=1.0.0
 openai>=2.0.0
 
 # HTTP client and server for A2A protocol
@@ -24,8 +25,9 @@ python-dotenv>=1.0.1
 # JSON repair for malformed LLM outputs (missing commas, unquoted keys, etc.)
 json-repair>=0.30.0
 
-# Logging
+# Logging & Terminal formatting
 structlog>=24.4.0
+rich>=13.7.0
 
 # Retry logic
 tenacity>=9.0.0
