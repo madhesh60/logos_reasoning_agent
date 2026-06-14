@@ -8,14 +8,14 @@ WORKDIR /app
 
 # Install OS deps (gcc for some python packages, curl for health checks)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+  gcc \
+  curl \
+  && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies first (layer caching)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+  pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
 COPY src/ ./src/
