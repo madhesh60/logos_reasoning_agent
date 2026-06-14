@@ -4,7 +4,7 @@ FROM python:3.11-slim
 ARG GIT_SHA="unknown"
 LABEL maintainer="Reasoning-Agent-Hackathon"
 LABEL description="OpenAI Reasoning Multi-Agent System — Microsoft Agent League Hackathon"
-LABEL version="1.0.0"
+LABEL version="1.0.5"
 LABEL git_sha=${GIT_SHA}
 
 WORKDIR /app
