@@ -175,12 +175,12 @@ pytest tests/test_agents.py -v
 
 ---
 
-## Hackathon Proof & Verification
+## Hackathon Submissions & Demos
 
 This section lists the system validation runs and screenshots showcasing the working state of the agent, its memory, traces, containerization, and security guardrails.
 
 ### 1. System Architecture
-![System Architecture](proofs/Architecture.png)
+![System Architecture](proofs/Architecture1.png)
 *Provides a high-level overview of the multi-agent orchestration pipeline, depicting how Planner, Researcher, Industry News Scanner, Competitive Intel, Analyst, and Writer agents cooperate and coordinate in a sequential pipeline.*
 
 ### 2. Conversation & Execution Trace
