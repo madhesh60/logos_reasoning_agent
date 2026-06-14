@@ -179,6 +179,11 @@ pytest tests/test_agents.py -v
 
 This section lists the system validation runs and screenshots showcasing the working state of the agent, its memory, traces, containerization, and security guardrails.
 
+### LOGOS Demo Video
+[![LOGOS Demo Video](https://img.youtube.com/vi/euy0AFie3Gc/0.jpg)](https://youtu.be/euy0AFie3Gc)
+
+*Watch the LOGOS Autonomous Multi-Agent Research System in action.*
+
 ### 1. System Architecture
 ![System Architecture](proofs/Architecture1.png)
 *Provides a high-level overview of the multi-agent orchestration pipeline, depicting how Planner, Researcher, Industry News Scanner, Competitive Intel, Analyst, and Writer agents cooperate and coordinate in a sequential pipeline.*
