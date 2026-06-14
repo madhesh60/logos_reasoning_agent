@@ -41,6 +41,14 @@ jobs:
           echo "username=$ACR_USER" >> $GITHUB_OUTPUT
           echo "password=$ACR_PASS" >> $GITHUB_OUTPUT
 
+      - name: Delete failed Container App (if exists)
+        continue-on-error: true
+        run: |
+          az containerapp delete \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yes
+
       - name: Deploy to Azure Container Apps
         uses: azure/container-apps-deploy-action@v1
         with:
